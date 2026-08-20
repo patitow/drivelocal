@@ -1,0 +1,12 @@
+drivelocal-server
+drivelocal-server.exe
+*.exe
+*.dll
+*.so
+*.dylib
+.env
+*.log
+
+
+
+
