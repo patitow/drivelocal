@@ -1,285 +1,152 @@
-# DriveLocal Media Server
+# DriveLocal
 
-Servidor de mídia local de alta performance para gerenciamento de vídeos e arquivos, construído com **Go** e **React**.
+Servidor de mídia para LAN: backend em **Go**, frontend em **React + TypeScript + Vite**, empacotado para **Docker**.
 
-## 🚀 Características
+Feito para rodar na rede local — streaming com Range Requests, galeria com thumbnails, autenticação e vários usuários.
 
-- ⚡ **Alta Performance**: Servidor Go com 5-10x mais rápido que Node.js
-- 🔐 **Autenticação Completa**: Cookies httpOnly, refresh tokens, recuperação de senha
-- 👥 **Multi-usuário**: Sistema de usuários com roles e permissões
-- 📹 **Streaming de Vídeo**: Suporte a Range Requests para streaming eficiente
-- 📦 **Download Múltiplo**: Download de múltiplos arquivos em ZIP
-- 🖼️ **Thumbnails**: Geração automática de thumbnails para vídeos
-- 🐳 **Docker Ready**: Pronto para containerização
-- 🌐 **Acesso Local**: Disponível na rede local na porta HTTP padrão (80)
+## O que tem
 
-## 📋 Pré-requisitos
+- Streaming de vídeo e download (incluindo ZIP de vários arquivos)
+- Thumbnails gerados com FFmpeg
+- Login com cookies httpOnly, refresh token e “lembrar de mim”
+- Papéis e permissões (read, write, delete, admin)
+- Pronto para Docker, com bind de pastas de mídia no host
 
-- **Go 1.21+** - [Download](https://golang.org/dl/)
-- **Node.js 18+** - Para build do frontend
-- **FFmpeg** - Para geração de thumbnails (opcional)
+## Requisitos
 
-## 🔧 Instalação
+**Produção (Docker):** Docker Desktop / Docker Engine + Compose, e FFmpeg já vai na imagem.
 
-### 1. Clone o repositório
+**Desenvolvimento:** [Go 1.24+](https://go.dev/dl/), [Node.js 18+](https://nodejs.org/) e FFmpeg (opcional, só para thumbnails).
+
+## Começando com Docker
 
 ```bash
 git clone https://github.com/patitow/drivelocal.git
 cd drivelocal
 ```
 
-### 2. Configure as variáveis de ambiente
+### 1. Usuários
 
-Copie `.env.example` para `.env` e ajuste:
-
-```bash
-cp .env.example .env
-```
-
-Edite `.env`:
-```env
-# Portas (padrão em dev: 3000/5000, produção: 80)
-PORT=80
-API_PORT=5000
-MEDIA_PATH=./media
-AUTH_ENABLED=true
-NODE_ENV=development
-```
-
-**Nota:** Em modo desenvolvimento (`npm run dev`), as portas padrão são:
-- Frontend: `3000` (sem privilégios admin)
-- Backend: `5000` (sem privilégios admin)
-
-Em produção, usa porta `80` (requer privilégios admin).
-
-### 3. Instale as dependências
+O `users.json` real **não** entra no git. Copie o exemplo:
 
 ```bash
-# Dependências do frontend
-cd client
-npm install
-cd ..
-
-# Dependências do Go (automático no primeiro run)
-cd server-go
-go mod download
-cd ..
+cp server-go/server/data/users.example.json server-go/server/data/users.json
 ```
 
-## 🚀 Uso
+Login padrão do exemplo: `admin` / `admin`. Troque isso antes de deixar o servidor na LAN.
 
-### Desenvolvimento
+No Docker, os usuários ficam no volume `drivelocal-data`. O arquivo do host só vale na primeira subida, se o volume ainda estiver vazio.
 
-```bash
-npm run dev
-```
+### 2. Pastas de mídia
 
-Inicia o servidor em modo desenvolvimento:
-- **Frontend (Vite):** http://localhost:3000
-- **Backend API:** http://localhost:5000/api
-
-**✨ Sem necessidade de privilégios de administrador!** As portas padrão (3000/5000) não requerem elevação no Windows.
-
-### Produção
-
-```bash
-npm run prod
-```
-
-Compila o frontend e inicia o servidor Go em modo produção.
-
-### Build Manual
-
-```bash
-# Build do frontend
-npm run build
-
-# Build do servidor Go
-npm run build:server
-
-# Build completo
-npm run build:all
-```
-
-## 🐳 Docker
-
-### Configuração Rápida com Autostart
-
-Para configurar o DriveLocal para iniciar automaticamente com o Windows e reiniciar em caso de crash:
-
-```batch
-scripts\setup-docker-autostart.bat
-```
-
-Este script configura:
-- ✅ Docker Desktop para autostart
-- ✅ DriveLocal para iniciar automaticamente
-- ✅ Reinício automático em caso de crash (`restart: always`)
-- ✅ Firewall para rede local apenas (não exposto para internet)
-
-### Executar Manualmente
-
-```batch
-# Iniciar
-docker-start.bat
-# ou
-docker compose up -d
-
-# Parar
-docker-stop.bat
-# ou
-docker compose down
-
-# Ver logs
-docker compose logs -f
-
-# Status
-docker compose ps
-```
-
-### Acesso na Rede Local
-
-O servidor está configurado para:
-- **Porta**: 80 (padrão)
-- **Rede**: Acessível apenas na rede local (não exposto para internet)
-- **Bind**: `0.0.0.0` (aceita conexões de qualquer interface de rede local)
-
-Para descobrir seu IP local:
-```batch
-ipconfig | findstr "IPv4"
-```
-
-Acesse em: `http://[SEU_IP_LOCAL]:80`
-
-### Docker Compose Manual
-
-```bash
-# Build
-docker compose build
-
-# Iniciar
-docker compose up -d
-
-# Logs
-docker compose logs -f
-
-# Parar
-docker compose down
-
-# Reiniciar
-docker compose restart
-```
-
-Pastas de mídia da sua máquina **não** vão no `docker-compose.yml` público. Copie o example e aponte para os discos locais:
+O `docker-compose.yml` commitado **não** monta disco nenhum. Copie o template e aponte para as pastas da sua máquina:
 
 ```bash
 cp docker-compose.override.example.yml docker-compose.override.yml
 ```
 
-O Compose junta os dois arquivos. O `docker-compose.override.yml` está no `.gitignore`.
+Exemplo com várias bibliotecas:
 
-### Remover Autostart
-
-```batch
-scripts\remove-docker-autostart.bat
+```yaml
+services:
+  drivelocal:
+    volumes:
+      - "D:/Videos:/data/Videos:ro"
+      - "D:/Anime:/data/Anime:ro"
 ```
 
-📖 **Documentação completa**: Veja [DOCKER-SETUP.md](./DOCKER-SETUP.md) para mais detalhes.
+Não monte também `./media:/data:ro` junto com binds aninhados (`/data/Anime`, etc.): um `/data` read-only impede o Docker de criar os pontos de montagem.
 
-## ⚙️ Configuração
+O `docker-compose.override.yml` está no `.gitignore`.
 
-### Variáveis de Ambiente
+### 3. Ambiente
 
-| Variável | Descrição | Padrão |
-|----------|-----------|--------|
+```bash
+cp .env.example .env
+```
+
+No Docker, o importante é `HOST_LAN_IP` (o IPv4 da LAN do host — o container não enxerga isso sozinho) e `TZ` se quiser. Descubra o IP com `ipconfig` (Windows) ou `ip addr` (Linux).
+
+### 4. Subir
+
+```bash
+docker compose up -d --build
+```
+
+| Onde | URL |
+|------|-----|
+| Neste PC | http://localhost/ ou http://127.0.0.1:8080/ (se a porta 80 já estiver ocupada) |
+| Na LAN | `http://<HOST_LAN_IP>/` |
+| Health | http://localhost/api/health |
+
+```bash
+docker compose logs -f
+docker compose down
+```
+
+No Windows, a porta 80 no host pede elevação; por isso o caminho normal de produção é Docker.
+
+## Desenvolvimento (sem Docker)
+
+```bash
+cp .env.example .env
+cp server-go/server/data/users.example.json server-go/server/data/users.json
+cd client && npm install && cd ..
+```
+
+```bash
+npm run dev
+```
+
+- Frontend (Vite): http://localhost:3000
+- API: http://localhost:5000
+
+Essas portas não precisam de admin no Windows.
+
+```bash
+npm run prod          # build do client + servidor Go em produção
+cd server-go && go run .
+cd server-go && go build -o drivelocal-server .
+```
+
+`MEDIA_PATH` padrão em dev é `./media`.
+
+## Autenticação
+
+Usuários ficam em `server-go/server/data/users.json` (gitignored). Use o `users.example.json` como ponto de partida.
+
+Variáveis úteis:
+
+| Variável | Função | Padrão |
+|----------|--------|--------|
+| `AUTH_ENABLED` | Liga/desliga login | `true` |
+| `MEDIA_PATH` | Raiz da biblioteca | `./media` (no container: `/data`) |
 | `PORT` | Porta do servidor | `80` |
-| `MEDIA_PATH` | Caminho para pasta de mídia | `./media` |
-| `AUTH_ENABLED` | Habilitar autenticação | `true` |
-| `NODE_ENV` | Ambiente (development/production) | `development` |
-| `TZ` | Timezone | `America/Sao_Paulo` |
+| `HOST_LAN_IP` | IPv4 da LAN, para o app anunciar o endereço certo no Docker | (vazio) |
+| `TZ` | Timezone | `UTC` no compose |
+| `NODE_ENV` | `development` ou `production` | `development` fora do Docker |
 
-### Acesso
+## Testes
 
-- **Local**: http://localhost/
-- **Rede**: `http://<LAN-IP>/` (defina `HOST_LAN_IP` no `.env`)
-- **API Health**: http://localhost/api/health
+```bash
+cd server-go && go test ./...
+cd client && npx vitest
+npm run test:playwright    # E2E; sobe `npm run dev` se a porta 3000 estiver livre
+```
 
-## 🔐 Autenticação
-
-### Usuário Padrão
-
-Copie `server-go/server/data/users.example.json` para `users.json` no mesmo diretório (arquivo local, fora do git).
-
-- **Username**: `admin`
-- **Password**: `admin`
-
-⚠️ **Importante**: Altere a senha padrão em produção!
-
-### Recursos de Autenticação
-
-- ✅ Cookies httpOnly (seguro)
-- ✅ Refresh tokens automáticos
-- ✅ "Remember me" (30 dias)
-- ✅ Recuperação de senha
-- ✅ Múltiplos usuários
-- ✅ Sistema de permissões (read, write, delete, admin)
-
-## 📁 Estrutura do Projeto
+## Estrutura
 
 ```
 drivelocal/
-├── client/              # Frontend React
-│   ├── src/
-│   └── dist/           # Build do frontend
-├── server-go/          # Servidor Go
-│   ├── main.go
-│   ├── auth.go
-│   ├── handlers.go
-│   └── middleware.go
-├── scripts/            # Scripts de desenvolvimento
-├── dist/               # Build final (frontend)
+├── client/                 # React + Vite
+├── server-go/              # API e streaming (Go 1.24)
+│   └── server/data/        # users.example.json; users.json é local
 ├── docker-compose.yml
+├── docker-compose.override.example.yml
 ├── Dockerfile
-└── package.json
+└── tests/                  # Playwright
 ```
 
-## 🧪 Testes
-
-```bash
-# Testes E2E com Playwright
-npm run test:playwright
-
-# Testes E2E com UI
-npm run test:playwright:ui
-```
-
-## 📊 Performance
-
-Comparado ao Node.js:
-- **Throughput**: ~5-10x mais requisições/segundo
-- **Latência**: ~50% menor
-- **Memória**: ~70% menos uso
-- **CPU**: ~40% menos uso
-
-## 🛠️ Desenvolvimento
-
-### Adicionar Nova Rota
-
-1. Edite `server-go/handlers.go`
-2. Adicione o handler
-3. Registre a rota em `server-go/main.go`
-
-### Modificar Autenticação
-
-Edite `server-go/auth.go` para ajustar:
-- Expiração de tokens
-- Validação de usuários
-- Permissões
-
-## 📝 Licença
+## Licença
 
 MIT
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas! Por favor, abra uma issue ou pull request.
