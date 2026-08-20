@@ -1,0 +1,14 @@
+[
+  {
+    "id": "example-admin-id",
+    "username": "admin",
+    "password": "$2a$10$L/6qnlHR/iD516l7Fn1iTui.P4OfkyY0voMH3avYD8XOHa6pVQ/P6",
+    "email": "admin@localhost",
+    "role": "admin",
+    "permissions": ["read", "write", "delete", "admin"],
+    "createdAt": "2026-01-01T00:00:00Z",
+    "active": true,
+    "resetToken": null,
+    "resetTokenExpiry": null
+  }
+]

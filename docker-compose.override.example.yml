@@ -1,0 +1,17 @@
+# Copy to docker-compose.override.yml (gitignored) and pick ONE approach.
+#
+# Nested binds under /data need the container /data directory to be writable
+# so Docker can create mountpoints. Do not also mount a read-only folder at /data.
+#
+# --- One library folder ---
+# services:
+#   drivelocal:
+#     volumes:
+#       - "./media:/data:ro"
+#
+# --- Several host folders (typical) ---
+# services:
+#   drivelocal:
+#     volumes:
+#       - "D:/Videos:/data/Videos:ro"
+#       - "D:/Anime:/data/Anime:ro"

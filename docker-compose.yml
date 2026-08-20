@@ -1,0 +1,57 @@
+services:
+  drivelocal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: drivelocal-media-server
+    restart: always
+    ports:
+      - "0.0.0.0:${PORT:-80}:80"
+      # Extra mapping if host port 80 is already taken
+      - "127.0.0.1:8080:80"
+    volumes:
+      # Media folders are bind-mounted in docker-compose.override.yml
+      # (copy docker-compose.override.example.yml). Do not mount ./media as
+      # /data:ro here — a read-only parent blocks nested host binds like
+      # /data/Animes.
+      - "drivelocal-thumbnails:/app/server/thumbnails"
+      - "drivelocal-cache:/app/cache"
+      - "drivelocal-data:/app/server/data"
+    environment:
+      - NODE_ENV=production
+      - PORT=80
+      - MEDIA_PATH=/data
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - TZ=${TZ:-UTC}
+      - THUMBNAIL_WORKERS=4
+      - HOST_LAN_IP=${HOST_LAN_IP:-}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '4.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    networks:
+      - drivelocal-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  drivelocal-thumbnails:
+  drivelocal-cache:
+  drivelocal-data:
+
+networks:
+  drivelocal-network:
+    driver: bridge
