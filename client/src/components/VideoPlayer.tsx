@@ -34,6 +34,10 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   const swipeStartXRef = useRef<number | null>(null)
   const didRetryAuthRef = useRef(false)
   const resumeTimeRef = useRef(0)
+  // Tracks the file currently shown so an in-flight token refresh can tell,
+  // once it resolves, whether the user has since navigated to another file.
+  const currentFilePathRef = useRef(file.path)
+  currentFilePathRef.current = file.path
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -133,7 +137,13 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       if (!didRetryAuthRef.current) {
         didRetryAuthRef.current = true
         resumeTimeRef.current = video.currentTime
+        const erroredFilePath = file.path
         api.refreshToken().then((refreshed) => {
+          // The user may have navigated to a different file while the
+          // refresh was in flight - don't clobber its <video> with this one.
+          if (currentFilePathRef.current !== erroredFilePath) {
+            return
+          }
           if (refreshed) {
             setHasError(false)
             setIsLoading(true)

@@ -108,4 +108,39 @@ describe('VideoPlayer - expired access token recovery', () => {
     fireEvent.error(video)
     await waitFor(() => expect(api.refreshToken).toHaveBeenCalledTimes(2))
   })
+
+  it('ignores a stale token refresh if the user navigated to another file while it was in flight', async () => {
+    let resolveRefresh!: (refreshed: boolean) => void
+    vi.mocked(api.refreshToken).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRefresh = resolve
+      })
+    )
+    const { rerender } = renderPlayer()
+
+    const video = document.querySelector('video') as HTMLVideoElement
+    fireEvent.error(video)
+    await waitFor(() => expect(api.refreshToken).toHaveBeenCalledTimes(1))
+
+    // Navigate away before the refresh for the errored file resolves.
+    const otherFile = { name: 'other.mkv', path: '/Animes/other.mkv', isVideo: true }
+    rerender(
+      <VideoPlayer
+        file={otherFile}
+        files={[file, otherFile]}
+        currentIndex={1}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />
+    )
+    const srcAfterNavigating = video.src
+
+    resolveRefresh(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The stale refresh for the first file must not clobber the now-current file's <video>.
+    expect(video.src).toBe(srcAfterNavigating)
+    expect(video.src).not.toContain('movie.mkv')
+    expect(video.load).not.toHaveBeenCalled()
+  })
 })
