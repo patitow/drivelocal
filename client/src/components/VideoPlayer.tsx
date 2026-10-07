@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { Play, Pause, Volume2, VolumeX, Maximize, Download, X, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { buildStreamUrlSync, buildDownloadUrlSync } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { saveAs } from 'file-saver'
 import { toast } from 'sonner'
 
@@ -31,11 +32,15 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   const [videoBox, setVideoBox] = useState<{ left: number; width: number } | null>(null)
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const swipeStartXRef = useRef<number | null>(null)
-  
+  const didRetryAuthRef = useRef(false)
+  const resumeTimeRef = useRef(0)
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
 
+  // Reads the token fresh from cookie/localStorage on every render, so a
+  // state update after refreshing the token rebuilds this with the new one.
   const streamUrl = buildStreamUrlSync(file.path)
 
   const canGoPrevious = currentIndex > 0
@@ -62,6 +67,8 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     setDuration(0)
     setIsPlaying(false)
     setVideoBox(null)
+    didRetryAuthRef.current = false
+    resumeTimeRef.current = 0
   }, [file.path])
 
   // Compute the video's actual rendered box (object-fit: contain math) so the
@@ -103,6 +110,11 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     const handleLoadedMetadata = () => {
       setDuration(video.duration)
       updateVideoBox()
+      if (resumeTimeRef.current > 0) {
+        video.currentTime = resumeTimeRef.current
+        resumeTimeRef.current = 0
+        video.play().catch(() => {})
+      }
     }
 
     const handleTimeUpdate = () => {
@@ -114,6 +126,27 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     }
 
     const handleError = () => {
+      // <video src> can't go through the axios 401-refresh interceptor, so an
+      // expired access token just fails the element forever. Try one silent
+      // token refresh and src reload (resuming at the same position) before
+      // surfacing the error to the user.
+      if (!didRetryAuthRef.current) {
+        didRetryAuthRef.current = true
+        resumeTimeRef.current = video.currentTime
+        api.refreshToken().then((refreshed) => {
+          if (refreshed) {
+            setHasError(false)
+            setIsLoading(true)
+            video.src = buildStreamUrlSync(file.path)
+            video.load()
+          } else {
+            setIsLoading(false)
+            setHasError(true)
+            toast.error('Failed to load video')
+          }
+        })
+        return
+      }
       setIsLoading(false)
       setHasError(true)
       toast.error('Failed to load video')
@@ -496,7 +529,9 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
                   <Button variant="outline" onClick={() => {
                     setHasError(false)
                     setIsLoading(true)
+                    didRetryAuthRef.current = false
                     if (videoRef.current) {
+                      videoRef.current.src = buildStreamUrlSync(file.path)
                       videoRef.current.load()
                     }
                   }}>
