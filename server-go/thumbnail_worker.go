@@ -26,7 +26,7 @@ type ThumbnailJob struct {
 	ThumbnailPath string
 	IsVideo       bool
 	IsFolder      bool
-	Priority      int // Higher = more priority
+	Priority      int         // Higher = more priority
 	Callback      func(error) // Called when job completes
 }
 
@@ -59,9 +59,9 @@ const (
 	PriorityLow    = 10  // Background/prefetch thumbnails
 
 	// Worker pool size - adjust based on CPU cores
-	DefaultWorkers = 2 // Start with 2 workers, can be increased
-	thumbnailWidth = 480
-	folderCollageSlots = 6
+	DefaultWorkers        = 2 // Start with 2 workers, can be increased
+	thumbnailWidth        = 480
+	folderCollageSlots    = 6
 	folderPreviewMaxDepth = 3
 )
 
@@ -88,8 +88,8 @@ func GetThumbnailPool() *ThumbnailWorkerPool {
 
 		thumbnailPool = &ThumbnailWorkerPool{
 			workers:       workers,
-			jobQueue:      make(chan ThumbnailJob, 100),      // Buffer for normal jobs
-			priorityQueue: make(chan ThumbnailJob, 20),       // Buffer for high priority jobs
+			jobQueue:      make(chan ThumbnailJob, 100), // Buffer for normal jobs
+			priorityQueue: make(chan ThumbnailJob, 20),  // Buffer for high priority jobs
 			activeJobs:    make(map[string]bool),
 			queuedJobs:    make(map[string]bool),
 			failedJobs:    make(map[string]time.Time),
@@ -207,17 +207,19 @@ func ffmpegCoverArtArgs(input, output string) []string {
 	}
 }
 
-func ffmpegVideoKeyframeArgs(input, output string) []string {
+// ffmpegVideoKeyframeArgs tira o quadro em "at" segundos; o filtro thumbnail
+// escolhe o mais representativo entre os próximos quadros (evita tela preta).
+func ffmpegVideoKeyframeArgs(input, output string, at int) []string {
 	return []string{
 		"-hide_banner", "-loglevel", "error",
-		"-ss", "1",
+		"-ss", strconv.Itoa(at),
 		"-noaccurate_seek",
 		"-i", input,
 		"-an",
 		"-sn",
 		"-map", "0:v:0",
 		"-frames:v", "1",
-		"-vf", fmt.Sprintf("scale=%d:-2:flags=fast_bilinear", thumbnailWidth),
+		"-vf", fmt.Sprintf("thumbnail=24,scale=%d:-2:flags=fast_bilinear", thumbnailWidth),
 		"-q:v", "5",
 		"-y", output,
 	}
@@ -262,8 +264,17 @@ func (p *ThumbnailWorkerPool) generateVideoThumbnail(filePath, thumbnailPath str
 		return nil
 	}
 
-	if err := runFfmpeg(12*time.Second, ffmpegVideoKeyframeArgs(filePath, thumbnailPath)); err != nil {
-		return err
+	// Começo de episódio costuma ser preto: tenta um ponto mais adiante e volta
+	// ao início quando o vídeo é curto demais para ele.
+	for _, at := range []int{90, 15, 1} {
+		os.Remove(thumbnailPath)
+		err := runFfmpeg(12*time.Second, ffmpegVideoKeyframeArgs(filePath, thumbnailPath, at))
+		if err == nil && thumbnailFileUsable(thumbnailPath) {
+			return nil
+		}
+		if at == 1 && err != nil {
+			return err
+		}
 	}
 	if !thumbnailFileUsable(thumbnailPath) {
 		return fmt.Errorf("ffmpeg produced empty thumbnail for %s", filePath)
@@ -388,7 +399,7 @@ func ThumbnailExists(filePath string) (bool, bool) {
 }
 
 var imagePreviewExts = []string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
-var videoPreviewExts = []string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v"}
+var videoPreviewExts = []string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v", ".m2ts", ".mts", ".mpg", ".mpeg"}
 
 func folderCollageLayout(n int) (cols, rows int) {
 	switch {
@@ -529,4 +540,3 @@ func (p *ThumbnailWorkerPool) generateFolderThumbnail(dirPath, thumbnailPath str
 	}
 	return nil
 }
-

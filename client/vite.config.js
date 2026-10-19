@@ -53,8 +53,13 @@ export default defineConfig({
       },
     },
   },
+  // JASSUB/libpgs: worker ES module e wasm servidos localmente (sem CDN)
+  worker: {
+    format: 'es',
+  },
   optimizeDeps: {
     include: ['react', 'react-dom', '@tanstack/react-router', '@tanstack/react-query'],
+    exclude: ['jassub'],
   },
 })
 

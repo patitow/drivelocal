@@ -51,3 +51,9 @@ Everything is committed directly to `main` — no feature-branch or PR workflow 
 ## Docker media mounts
 
 Host media paths belong in `docker-compose.override.yml` (gitignored). Use `docker-compose.override.example.yml` as a template. The committed `docker-compose.yml` does not bind-mount host media; a read-only `/data` parent would block nested mounts.
+
+## Host mount helper
+
+Admins add/remove host folders from the UI. The container never mounts host paths on its own: `host-helper/` (Go, built to `host-helper/drivelocal-helper.exe`) runs on the Windows host, listens only on `127.0.0.1:47123`, rewrites the `services.drivelocal.volumes` entries targeting `/data/<name>` in `docker-compose.override.yml`, and runs `docker compose up -d`. The server proxies admin requests to it using `MOUNT_HELPER_URL` (default `http://host.docker.internal:47123`) and `MOUNT_HELPER_TOKEN` from `.env`.
+- Install: `scripts/install-mount-helper.bat` (builds, runs `init` to create the token, registers the "DriveLocal Mount Helper" logon task). Remove: `scripts/remove-mount-helper.bat`. `scripts/docker-autostart.bat` starts that task before `compose up`.
+- Once the app manages a folder, its `/data/*` entry in the override file is owned by the helper; edit by hand only if you know the rewrite will keep it.

@@ -25,6 +25,19 @@ services:
       - TZ=${TZ:-UTC}
       - THUMBNAIL_WORKERS=4
       - HOST_LAN_IP=${HOST_LAN_IP:-}
+      # Helper de montagem de pastas no host (host-helper/). Token vem do .env.
+      - MOUNT_HELPER_URL=${MOUNT_HELPER_URL:-http://host.docker.internal:47123}
+      - MOUNT_HELPER_TOKEN=${MOUNT_HELPER_TOKEN:-}
+      # Biblioteca: IA local via agent-hub (llama-swap) no host. Chave vem do .env.
+      - AI_BASE_URL=${AI_BASE_URL:-http://host.docker.internal:8787/v1}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_TEXT_MODEL=${AI_TEXT_MODEL:-gemma4-12b-vision}
+      - AI_VISION_MODEL=${AI_VISION_MODEL:-gemma4-12b-vision}
+      - AI_WINDOW=${AI_WINDOW:-01:00-08:00}
+      - AI_TZ=${AI_TZ:-America/Sao_Paulo}
+      - AI_ENABLED=${AI_ENABLED:-true}
+      # Metadados de filmes (capa/sinopse). Sem chave, filmes usam só o AniList.
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/api/health"]
       interval: 30s
@@ -39,6 +52,8 @@ services:
         reservations:
           memory: 256M
           cpus: '0.25'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - drivelocal-network
     logging:

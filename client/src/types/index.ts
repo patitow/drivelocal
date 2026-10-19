@@ -31,6 +31,64 @@ export interface HealthResponse {
   mediaPath: string
   mediaPathExists: boolean
   authEnabled?: boolean
+  bootId?: string // aleatório por boot do servidor; muda quando o container reinicia
+}
+
+// Montagem dinâmica de pastas do host (admin)
+export interface MountEntry {
+  name: string
+  hostPath: string
+  target: string // ex.: /data/<nome>
+  legacy: boolean // entrada já existente no override antes do app gerenciar
+}
+
+export type MountJobState =
+  | 'queued'
+  | 'applying'
+  | 'verifying'
+  | 'done'
+  | 'rolled_back'
+  | 'rollback_failed'
+
+export interface MountJob {
+  id: string
+  op: 'add' | 'remove'
+  name: string
+  state: MountJobState
+  error?: string
+  startedAt: string
+  finishedAt?: string
+}
+
+export interface MountsResponse {
+  helper: { available: boolean; version?: string }
+  revision?: string // ausente quando o helper está offline
+  mounts: MountEntry[]
+  activeJob?: MountJob | null
+  containerMounts: string[] // destinos /data/* montados no container (ex.: ["/data/Animes"])
+}
+
+export interface BrowseEntry {
+  name: string
+  path: string
+  selectable: boolean
+  reason?: string // motivo quando selectable === false
+}
+
+export interface BrowseResponse {
+  path: string // '' quando lista os drives
+  parent: string | null
+  entries: BrowseEntry[]
+}
+
+export interface MountJobAccepted {
+  jobId: string
+  revision?: string
+}
+
+export interface MountApiError {
+  error: string // código, ex.: revision_conflict, busy, already_mounted, name_conflict
+  message?: string
 }
 
 export interface NetworkInfo {
@@ -172,3 +230,53 @@ export interface UpdateUserRequest {
 export interface UsersResponse {
   users: User[]
 }
+export interface AudioTrack {
+  order: number
+  lang: string
+  title: string
+  codec: string
+  channels: number
+  default: boolean
+  playable: boolean
+}
+
+export interface SubtitleTrack {
+  id: string
+  lang: string
+  title: string
+  codec: string
+  external: boolean
+  default: boolean
+  supported: boolean
+  kind?: 'text' | 'ass' | 'pgs' | ''
+  // legenda de texto embutida já extraída no servidor
+  ready?: boolean
+}
+
+export interface FontAttachment {
+  index: number
+  name: string
+}
+
+export type PlaybackMode = 'direct' | 'remux' | 'transcode'
+
+export interface MediaInfo {
+  duration: number
+  container?: string
+  videoIndex?: number
+  videoCodec: string
+  videoProfile?: string
+  pixFmt?: string
+  width?: number
+  height?: number
+  audio: AudioTrack[]
+  subtitles: SubtitleTrack[]
+  fonts?: FontAttachment[]
+  // decisão do servidor para as caps enviadas
+  playback?: { mode: PlaybackMode; reason: string }
+  chapters?: MediaChapter[]
+  // capítulo de abertura (OP), quando o arquivo marca
+  intro?: MediaChapter
+}
+
+export interface MediaChapter { start: number; end: number; title: string }

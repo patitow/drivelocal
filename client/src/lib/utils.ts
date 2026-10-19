@@ -24,7 +24,7 @@ export function getFileExtension(filename: string): string {
 }
 
 export function isVideoFile(filename: string): boolean {
-  const videoExtensions = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv', 'm4v']
+  const videoExtensions = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv', 'm4v', 'm2ts', 'mts', 'mpg', 'mpeg']
   const ext = getFileExtension(filename).toLowerCase()
   return videoExtensions.includes(ext)
 }
@@ -115,9 +115,23 @@ function withMediaAuthToken(url: string): string {
   return `${url}${separator}token=${encodeURIComponent(token)}`
 }
 
+// A miniatura vai para o cache do navegador como imutável; subir THUMB_VERSION
+// invalida as antigas quando o servidor passa a gerá-las de outro jeito.
+const THUMB_VERSION = 2
+
 export function buildThumbnailUrlSync(filePath: string): string {
   const baseUrl = window.location.origin
-  return withMediaAuthToken(`${baseUrl}/api/thumbnail/${encodeMediaPath(filePath)}`)
+  return withMediaAuthToken(`${baseUrl}/api/thumbnail/${encodeMediaPath(filePath)}?v=${THUMB_VERSION}`)
+}
+
+// URL absoluta (o worker do JASSUB/libpgs resolve relativo ao próprio script) com o token de mídia
+export function buildSubtitleUrlSync(filePath: string, id: string, format: 'vtt' | 'ass' | 'sup'): string {
+  const q = `id=${encodeURIComponent(id)}&format=${format}`
+  return withMediaAuthToken(`${window.location.origin}/api/subtitle/${encodeMediaPath(filePath)}?${q}`)
+}
+
+export function buildFontUrlSync(filePath: string, index: number): string {
+  return withMediaAuthToken(`${window.location.origin}/api/media-font/${encodeMediaPath(filePath)}?i=${index}`)
 }
 
 export function buildDownloadUrlSync(filePath: string): string {

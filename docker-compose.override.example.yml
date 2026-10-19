@@ -1,4 +1,8 @@
 # Copy to docker-compose.override.yml (gitignored) and pick ONE approach.
+# ATENÇÃO: este arquivo é gerenciado pelo app (tela de administração), via o
+# helper no host (host-helper/). Ao adicionar ou remover pastas, o app reescreve
+# a seção services.drivelocal.volumes. Edições manuais são preservadas, mas
+# confira com `docker compose config -q` depois de alterar.
 #
 # Nested binds under /data need the container /data directory to be writable
 # so Docker can create mountpoints. Do not also mount a read-only folder at /data.
@@ -15,3 +19,14 @@
 #     volumes:
 #       - "D:/Videos:/data/Videos:ro"
 #       - "D:/Anime:/data/Anime:ro"
+#
+# --- Long syntax (formato usado pelo app; cada pasta vira /data/<nome>) ---
+# services:
+#   drivelocal:
+#     volumes:
+#       - type: bind
+#         source: D:/Videos
+#         target: /data/Videos
+#         read_only: true
+#         bind:
+#           create_host_path: false

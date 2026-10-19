@@ -1,0 +1,24 @@
+# Override de teste: comentários e chaves fora de /data devem sobreviver.
+services:
+  drivelocal:
+    # ambiente do servidor
+    environment:
+      - TZ=America/Sao_Paulo
+      - PORT=8080
+    ports:
+      - "8080:8080"
+    volumes:
+      # volume que não é biblioteca
+      - ./logs:/app/logs
+      # bibliotecas em sintaxe curta
+      - E:/Filmes:/data/Filmes:ro
+      - "E:/Meus Filmes:/data/Meus Filmes:ro"
+      - "D:/Fotos:/data/.Fotos:ro"
+      - "  C:/Docs   :  /data/Docs   :  rw  "
+      # biblioteca em sintaxe longa
+      - type: bind
+        source: E:\Musicas
+        target: /data/Musicas
+        read_only: true
+        bind:
+          create_host_path: false

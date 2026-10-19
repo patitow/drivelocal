@@ -1,0 +1,9 @@
+services:
+  drivelocal:
+    volumes:
+      - type: bind
+        source: E:\Filmes
+        target: /data/Filmes
+        read_only: true
+        bind:
+          create_host_path: false

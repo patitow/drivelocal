@@ -32,13 +32,11 @@ func TestListUsersHandler(t *testing.T) {
 
 	// Create admin token
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "admin",
 		UserID:    adminID,
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	req := httptest.NewRequest("GET", "/api/users", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -84,13 +82,11 @@ func TestCreateUserHandler(t *testing.T) {
 
 	// Create admin token
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "admin",
 		UserID:    adminID,
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	reqBody := map[string]interface{}{
 		"username":    "newuser",
@@ -151,13 +147,11 @@ func TestCreateUserHandlerValidation(t *testing.T) {
 	usersMutex.Unlock()
 
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "admin",
 		UserID:    adminID,
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	// Test with invalid username (too short)
 	reqBody := map[string]interface{}{
@@ -200,13 +194,11 @@ func TestUpdateUserHandler(t *testing.T) {
 	usersMutex.Unlock()
 
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "admin",
 		UserID:    adminID,
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	reqBody := map[string]interface{}{
 		"email": "updated@test.com",
@@ -265,13 +257,11 @@ func TestDeleteUserHandler(t *testing.T) {
 	usersMutex.Unlock()
 
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "admin",
 		UserID:    adminID,
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	req := httptest.NewRequest("DELETE", "/api/users/1", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

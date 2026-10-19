@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '@/lib/api'
+import { SERVER_RESTORED_EVENT } from '@/lib/reconnect'
+import { clearOfflineManga } from '@/lib/offlineCache'
 import type { LoginRequest } from '@/types'
 import { toast } from 'sonner'
 
@@ -24,14 +26,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<string | null>(null)
   const [permissions, setPermissions] = useState<string[]>([])
   const [authEnabled, setAuthEnabled] = useState(true)
+  // Verificação que falhou por motivo que não é 401 (ex.: servidor reiniciando).
+  // Nesse caso a sessão é mantida e a verificação é refeita quando o servidor voltar.
+  const retryAfterRestoreRef = useRef(false)
 
   const checkAuth = useCallback(async (preserveState: boolean = false) => {
     try {
       setIsLoading(true)
-      
+
       // First check if auth is enabled via health check
       const health = await api.checkHealth()
-      
+
       if (!health.authEnabled) {
         // Auth is disabled, allow access
         setAuthEnabled(false)
@@ -46,6 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Don't retry on 401 - just set as not authenticated
       try {
         const status = await api.getAuthStatus()
+        retryAfterRestoreRef.current = false
         if (status.authenticated) {
           setIsAuthenticated(true)
           setUsername(status.username)
@@ -61,38 +67,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch (error: any) {
-        // If 401, user is not authenticated - this is expected
         if (error.response?.status === 401) {
-          // Only reset state if not preserving (i.e., not after a successful login)
+          // 401 - user is not authenticated - this is expected
+          retryAfterRestoreRef.current = false
           if (!preserveState) {
             setIsAuthenticated(false)
             setUsername(null)
           }
         } else {
-          // Other errors - log but don't retry
+          // Erro que não é 401 (rede, 5xx, servidor reiniciando): NÃO desloga.
+          // Refaz a verificação quando o servidor voltar.
           if (import.meta.env.DEV) {
-            console.error('Auth check error:', error)
+            console.error('Auth check error (sessão mantida):', error)
           }
-          // Only reset state if not preserving
-          if (!preserveState) {
-            setIsAuthenticated(false)
-            setUsername(null)
-            setRole(null)
-            setPermissions([])
-          }
+          retryAfterRestoreRef.current = true
         }
       }
     } catch (error) {
       if (import.meta.env.DEV) {
-        console.error('Auth check failed:', error)
+        console.error('Auth check failed (sessão mantida):', error)
       }
-      // Only reset state if not preserving
-      if (!preserveState) {
-        setIsAuthenticated(false)
-        setUsername(null)
-        setRole(null)
-        setPermissions([])
-      }
+      // Falha ao checar saúde/servidor indisponível: mantém o estado e retenta após server:restored
+      retryAfterRestoreRef.current = true
     } finally {
       setIsLoading(false)
     }
@@ -141,6 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [checkAuth])
 
   const logout = useCallback(async () => {
+    clearOfflineManga().catch(() => {})
     try {
       setIsLoading(true)
       await api.logout()
@@ -177,6 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Listen for logout events (from API interceptor)
     const handleLogout = () => {
       if (mounted) {
+        clearOfflineManga().catch(() => {})
         setIsAuthenticated(false)
         setUsername(null)
         setRole(null)
@@ -185,12 +183,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    // Servidor voltou: refaz a verificação que falhou durante a indisponibilidade
+    const handleRestored = () => {
+      if (mounted && retryAfterRestoreRef.current) {
+        void checkAuth(true)
+      }
+    }
+
     window.addEventListener('auth:logout', handleLogout)
+    window.addEventListener(SERVER_RESTORED_EVENT, handleRestored)
     return () => {
       mounted = false
       window.removeEventListener('auth:logout', handleLogout)
+      window.removeEventListener(SERVER_RESTORED_EVENT, handleRestored)
     }
-  }, []) // Empty deps - only run once on mount
+  }, [checkAuth]) // checkAuth é estável (useCallback com deps vazias)
 
   const value: AuthContextType = {
     isAuthenticated,
@@ -205,6 +212,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+// Usuário logado sem exigir o provider (componentes que também rodam isolados).
+export function useAuthUsername(): string | null {
+  return useContext(AuthContext)?.username ?? null
 }
 
 export function useAuth() {

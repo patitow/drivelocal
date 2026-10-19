@@ -205,79 +205,92 @@ func createTokens(username, userID string, rememberMe bool) (string, string, int
 		refreshExpires = now + REMEMBER_ME_EXPIRY
 	}
 
+	// Os mapas usam hashToken(raw) como chave; o token cru só existe no cliente.
+	refreshKey := hashToken(refreshToken)
 	tokensMutex.Lock()
-	tokens[accessToken] = &TokenData{
+	tokens[hashToken(accessToken)] = &TokenData{
 		Username:     username,
 		UserID:       userID,
 		ExpiresAt:    accessExpires,
-		RefreshToken: refreshToken,
+		RefreshToken: refreshKey,
 	}
-	refreshTokens[refreshToken] = &TokenData{
+	refreshTokens[refreshKey] = &TokenData{
 		Username:  username,
 		UserID:    userID,
 		ExpiresAt: refreshExpires,
 	}
 	tokensMutex.Unlock()
+	markSessionsDirty()
 
 	return accessToken, refreshToken, accessExpires
 }
 
 func validateToken(token string) *TokenData {
+	key := hashToken(token)
+
 	tokensMutex.RLock()
-	defer tokensMutex.RUnlock()
-	
-	data, exists := tokens[token]
+	data, exists := tokens[key]
+	tokensMutex.RUnlock()
 	if !exists {
 		return nil
 	}
-	
+
 	if time.Now().UnixMilli() > data.ExpiresAt {
-		delete(tokens, token)
+		tokensMutex.Lock()
+		delete(tokens, key)
+		tokensMutex.Unlock()
+		markSessionsDirty()
 		return nil
 	}
-	
+
 	return data
 }
 
 func refreshAccessToken(refreshToken string) (string, int64, bool) {
+	refreshKey := hashToken(refreshToken)
+
 	tokensMutex.Lock()
 	defer tokensMutex.Unlock()
-	
-	data, exists := refreshTokens[refreshToken]
+
+	data, exists := refreshTokens[refreshKey]
 	if !exists {
 		return "", 0, false
 	}
-	
+
 	if time.Now().UnixMilli() > data.ExpiresAt {
-		delete(refreshTokens, refreshToken)
+		delete(refreshTokens, refreshKey)
+		markSessionsDirty()
 		return "", 0, false
 	}
-	
+
 	// Create new access token
 	newAccessToken := generateToken(32)
 	now := time.Now().UnixMilli()
 	expires := now + ACCESS_TOKEN_EXPIRY
-	
-	tokens[newAccessToken] = &TokenData{
+
+	tokens[hashToken(newAccessToken)] = &TokenData{
 		Username:     data.Username,
 		UserID:       data.UserID,
 		ExpiresAt:    expires,
-		RefreshToken: refreshToken,
+		RefreshToken: refreshKey,
 	}
-	
+	markSessionsDirty()
+
 	return newAccessToken, expires, true
 }
 
 func revokeToken(token string) {
+	key := hashToken(token)
+
 	tokensMutex.Lock()
-	defer tokensMutex.Unlock()
-	
-	if data, exists := tokens[token]; exists {
+	if data, exists := tokens[key]; exists {
 		if data.RefreshToken != "" {
 			delete(refreshTokens, data.RefreshToken)
 		}
-		delete(tokens, token)
+		delete(tokens, key)
 	}
+	tokensMutex.Unlock()
+	markSessionsDirty()
 }
 
 func isMediaAuthPath(path string) bool {
@@ -369,6 +382,9 @@ func authMiddleware(next http.Handler) http.Handler {
 		}
 
 		tokenData := validateToken(token)
+		if tokenData == nil && strings.HasPrefix(token, apiTokenPrefix) {
+			tokenData = validateAPIToken(token) // tokens de API da biblioteca (library_tokens.go)
+		}
 		if tokenData == nil {
 			logDebug("Invalid or expired token for %s", r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")

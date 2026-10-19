@@ -1,10 +1,53 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Play, Pause, Volume2, VolumeX, Maximize, Download, X, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Play, Pause, Volume2, VolumeX, Maximize, Download, X, Loader2, ChevronLeft, ChevronRight, Captions, AudioLines, Check, FileWarning, SkipForward } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { buildStreamUrlSync, buildDownloadUrlSync } from '@/lib/utils'
-import { api } from '@/lib/api'
+import { buildStreamUrlSync, buildDownloadUrlSync, buildFontUrlSync, buildSubtitleUrlSync } from '@/lib/utils'
 import { saveAs } from 'file-saver'
 import { toast } from 'sonner'
+import { SERVER_RESTORED_EVENT } from '@/lib/reconnect'
+import { api } from '@/lib/api'
+import { parseVtt, type Cue } from '@/lib/vtt'
+import { audioLabel, defaultAudio, loadTrackPrefs, pickAudioByLang, pickSubtitleByLang, saveTrackPref, subtitleLabel } from '@/lib/tracks'
+import { buildPlaybackUrl, clientCaps, effectiveMode, initialMode, modeLabel, nextMode, silentFailure, streamBase } from '@/lib/playback'
+import { clampDelay, describeDelay, formatDelay, loadSync, saveSync, syncKey, SYNC_STEP_MS, type SyncDelays, type SyncKind } from '@/lib/sync'
+import { createAssRenderer, createPgsRenderer, type SubRenderer } from '@/lib/subRenderers'
+import type { AudioTrack, MediaInfo, PlaybackMode, SubtitleTrack } from '@/types'
+import { usePlaybackProgress } from '@/hooks/usePlaybackProgress'
+import { formatDuration, nextPlayableIndex } from '@/lib/library'
+
+const VTT_ENTITIES: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&nbsp;': ' ', '&lrm;': '', '&rlm;': '' }
+
+// Renderiza o texto de uma cue sem innerHTML: só <i> e <b> viram estilo
+function CueText({ text }: { text: string }) {
+  let italic = false
+  let bold = false
+  return (
+    <>
+      {text.split(/(<\/?[ib]>)/).map((part, i) => {
+        if (part === '<i>') { italic = true; return null }
+        if (part === '</i>') { italic = false; return null }
+        if (part === '<b>') { bold = true; return null }
+        if (part === '</b>') { bold = false; return null }
+        const plain = part.replace(/&(amp|lt|gt|nbsp|lrm|rlm);/g, (m) => VTT_ENTITIES[m] ?? m)
+        return <span key={i} className={`${italic ? 'italic ' : ''}${bold ? 'font-bold' : ''}`}>{plain}</span>
+      })}
+    </>
+  )
+}
+
+// Linha de ajuste de sincronia nos menus de áudio/legenda: − valor + e Redefinir
+function SyncRow({ label, keys, value, onChange }: { label: string; keys: string; value: number; onChange: (ms: number) => void }) {
+  const btn = 'rounded px-2 py-0.5 hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-transparent'
+  return (
+    <div role="group" aria-label={label} className="mt-1 flex items-center gap-1 border-t border-white/10 px-3 py-2 text-xs text-white/60">
+      <span className="flex-1 truncate" title={`Atalhos: ${keys}`}>{label} <span className="text-white/40">({keys})</span></span>
+      <button type="button" className={btn} aria-label={`${label}: −${SYNC_STEP_MS} ms`} onClick={() => onChange(value - SYNC_STEP_MS)}>−</button>
+      <span className="w-16 text-center tabular-nums text-white/90">{formatDelay(value)}</span>
+      <button type="button" className={btn} aria-label={`${label}: +${SYNC_STEP_MS} ms`} onClick={() => onChange(value + SYNC_STEP_MS)}>+</button>
+      <button type="button" className={btn} disabled={value === 0} onClick={() => onChange(0)}>Redefinir</button>
+    </div>
+  )
+}
 
 interface VideoPlayerProps {
   file: {
@@ -19,6 +62,12 @@ interface VideoPlayerProps {
   onNavigate: (index: number) => void
 }
 
+// Caminho que deve começar tocando ao abrir (definido pelo autoplay ao fim do anterior)
+let autoplayPendingPath: string | null = null
+const UP_NEXT_SECONDS = 8
+// Sem capítulo de abertura no arquivo: botão de pular este tanto (abertura típica de anime).
+const INTRO_GUESS_S = 85
+
 export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: VideoPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
@@ -32,29 +81,107 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   const [videoBox, setVideoBox] = useState<{ left: number; width: number } | null>(null)
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const swipeStartXRef = useRef<number | null>(null)
-  const didRetryAuthRef = useRef(false)
-  const resumeTimeRef = useRef(0)
-  // Tracks the file currently shown so an in-flight token refresh can tell,
-  // once it resolves, whether the user has since navigated to another file.
-  const currentFilePathRef = useRef(file.path)
-  currentFilePathRef.current = file.path
+  const isPlayingRef = useRef(false)
+  const lastTimeRef = useRef(0)
+  const authRetriedRef = useRef(false)
+  const [, setAuthSeq] = useState(0) // força novo render (e novo src) após renovar o token
+  const currentPathRef = useRef(file.path)
+  currentPathRef.current = file.path
+  // Posição e estado de reprodução no momento de um erro, para retomar após o servidor voltar
+  const resumeRef = useRef<{ time: number; wasPlaying: boolean } | null>(null)
+
+  // Faixas de áudio/legenda e modo de reprodução. minMode vem do servidor (direct/remux/transcode)
+  // e sobe na cadeia de fallback se o navegador falhar; audioSel !== null = faixa que exige remux.
+  // Fora do modo direct o servidor gera o stream a partir de `offset` e o tempo do <video> é relativo a ele.
+  const [info, setInfo] = useState<MediaInfo | null>(null)
+  const [infoReady, setInfoReady] = useState(false)
+  const [minMode, setMinMode] = useState<PlaybackMode>('direct')
+  const [audioSel, setAudioSel] = useState<number | null>(null)
+  const [offset, setOffset] = useState(0)
+  // Ajuste manual de sincronia (ms, por arquivo). sync = o que o usuário escolheu; streamDelay = o ajuste
+  // de áudio com que o stream atual foi pedido ao servidor (só muda quando o stream é recarregado).
+  const [sync, setSync] = useState<SyncDelays>(() => loadSync(file.path))
+  const [streamDelay, setStreamDelay] = useState(() => loadSync(file.path).audio)
+  const [osd, setOsd] = useState<string | null>(null)
+  const syncRef = useRef(sync)
+  const streamDelayRef = useRef(streamDelay)
+  const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const audioDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [subId, setSubId] = useState<string | null>(null)
+  const [cues, setCues] = useState<Cue[]>([])
+  const [activeText, setActiveText] = useState('')
+  const [menu, setMenu] = useState<'audio' | 'subs' | null>(null)
+  // ffprobe não abre o arquivo: aviso no lugar do player (não tenta tocar)
+  const [broken, setBroken] = useState<string | null>(null)
+  const [subLoading, setSubLoading] = useState(false)
+  // contagem antes do próximo episódio (autoplay)
+  const [upNext, setUpNext] = useState<{ index: number; left: number } | null>(null)
+  const offsetRef = useRef(0)
+  const audioSelRef = useRef<number | null>(null)
+  const modeRef = useRef<PlaybackMode>('direct')
+  const minModeRef = useRef<PlaybackMode>('direct')
+  const seekSeqRef = useRef(0)
+  const silentCheckRef = useRef<{ checked: boolean; startedAt: number | null }>({ checked: false, startedAt: null })
+  const subRendererRef = useRef<SubRenderer | null>(null)
+  const infoRef = useRef<MediaInfo | null>(null)
+  const durationRef = useRef(0)
+  const pendingPlayRef = useRef(false)
+  const startAtRef = useRef<number | null>(null)
+  const scrubbingRef = useRef(false)
+  const scrubValueRef = useRef(0)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
 
-  // Reads the token fresh from cookie/localStorage on every render, so a
-  // state update after refreshing the token rebuilds this with the new one.
   const streamUrl = buildStreamUrlSync(file.path)
+  const mode = effectiveMode(minMode, audioSel, streamDelay)
+  modeRef.current = mode
+  const src = buildPlaybackUrl(streamUrl, mode, audioSel, offset, streamDelay)
+  // tempo do arquivo = base + video.currentTime (stream processado começa streamLead s antes de offset)
+  const base = streamBase(mode, offset, streamDelay)
+
+  // Progresso por usuário (biblioteca): retomar posição, salvar periodicamente e autoplay do próximo
+  const progress = usePlaybackProgress(file.path)
+  const progressRef = useRef(progress)
+  progressRef.current = progress
+  const resumeAppliedRef = useRef<string | null>(null)
 
   const canGoPrevious = currentIndex > 0
   const canGoNext = currentIndex < files.length - 1
+
+  const playNext = useCallback((index: number) => {
+    setUpNext(null)
+    autoplayPendingPath = files[index]?.path ?? null
+    onNavigate(index)
+  }, [files, onNavigate])
+
+  // Contagem do próximo episódio; dar play de novo (voltou a cena) cancela.
+  useEffect(() => {
+    if (!upNext) return
+    if (upNext.left <= 0) { playNext(upNext.index); return }
+    const t = window.setTimeout(() => setUpNext((u) => (u ? { ...u, left: u.left - 1 } : u)), 1000)
+    const video = videoRef.current
+    const cancel = () => setUpNext(null)
+    video?.addEventListener('play', cancel)
+    return () => {
+      window.clearTimeout(t)
+      video?.removeEventListener('play', cancel)
+    }
+  }, [upNext, playNext])
 
   const handlePrevious = useCallback(() => {
     if (currentIndex > 0) {
       onNavigate(currentIndex - 1)
     }
   }, [currentIndex, onNavigate])
+
+  const filesRef = useRef(files)
+  filesRef.current = files
+  const indexRef = useRef(currentIndex)
+  indexRef.current = currentIndex
+  const onNavigateRef = useRef(onNavigate)
+  onNavigateRef.current = onNavigate
 
   const handleNext = useCallback(() => {
     if (currentIndex < files.length - 1) {
@@ -71,9 +198,248 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     setDuration(0)
     setIsPlaying(false)
     setVideoBox(null)
-    didRetryAuthRef.current = false
-    resumeTimeRef.current = 0
+    lastTimeRef.current = 0
+    resumeRef.current = null
+    setInfo(null)
+    setInfoReady(false)
+    setAudioSel(null)
+    setMinMode('direct')
+    setOffset(0)
+    setSubId(null)
+    setCues([])
+    setActiveText('')
+    setMenu(null)
+    setBroken(null)
+    setSubLoading(false)
+    setUpNext(null)
+    const saved = loadSync(file.path)
+    syncRef.current = saved
+    streamDelayRef.current = saved.audio
+    setSync(saved)
+    setStreamDelay(saved.audio)
+    setOsd(null)
+    if (audioDelayTimerRef.current) clearTimeout(audioDelayTimerRef.current)
+    infoRef.current = null
+    audioSelRef.current = null
+    minModeRef.current = 'direct'
+    seekSeqRef.current++
+    startAtRef.current = null
+    pendingPlayRef.current = false
+    scrubbingRef.current = false
+    authRetriedRef.current = false
   }, [file.path])
+
+  useEffect(() => { audioSelRef.current = audioSel }, [audioSel])
+  useEffect(() => { minModeRef.current = minMode }, [minMode])
+  useEffect(() => { offsetRef.current = base }, [base])
+  useEffect(() => { durationRef.current = duration }, [duration])
+  // Trocou de stream: o <video> recomeça, então o estado de "já tocou" e a checagem de falha silenciosa também
+  useEffect(() => {
+    setHasStartedPlaying(false)
+    silentCheckRef.current = { checked: false, startedAt: null }
+  }, [src])
+
+  // Descobre as faixas do arquivo e aplica as preferências de idioma lembradas
+  useEffect(() => {
+    let cancelled = false
+    api.getMediaInfo(file.path, clientCaps())
+      .then((mi) => {
+        if (cancelled) return
+        mi = { ...mi, audio: mi.audio ?? [], subtitles: mi.subtitles ?? [], fonts: mi.fonts ?? [] }
+        infoRef.current = mi
+        setInfo(mi)
+        const startMode = initialMode(mi)
+        minModeRef.current = startMode
+        setMinMode(startMode)
+        const prefs = loadTrackPrefs()
+        const nativeTrack = defaultAudio(mi)
+        const wanted = pickAudioByLang(mi, prefs.audio) ?? nativeTrack
+        if (wanted && !(wanted.order === nativeTrack?.order && wanted.playable)) {
+          audioSelRef.current = wanted.order
+          setAudioSel(wanted.order)
+        }
+        const sub = prefs.sub && prefs.sub !== 'off' ? pickSubtitleByLang(mi, prefs.sub) : undefined
+        if (sub) setSubId(sub.id)
+      })
+      .catch((e: { response?: { data?: { broken?: unknown } } }) => {
+        // arquivo corrompido: o servidor diz o motivo; outros erros (sem ffprobe): toca o arquivo cru
+        const why = e?.response?.data?.broken
+        if (!cancelled && typeof why === 'string') setBroken(why)
+      })
+      .finally(() => { if (!cancelled) setInfoReady(true) })
+    return () => { cancelled = true }
+  }, [file.path])
+
+  // Baixa e exibe a legenda escolhida: texto vira WebVTT no overlay; ASS vai para o JASSUB
+  // (estilos/fontes do arquivo) e PGS para o libpgs, ambos desenhando num canvas sobre o vídeo.
+  const subKind = info?.subtitles.find((s) => s.id === subId)?.kind || 'text'
+  useEffect(() => {
+    setCues([])
+    setActiveText('')
+    const video = videoRef.current
+    if (!subId || !video) return
+    let cancelled = false
+    let renderer: SubRenderer | null = null
+    setSubLoading(true)
+    const loaded = () => { if (!cancelled) setSubLoading(false) }
+    const fail = () => {
+      if (cancelled) return
+      setSubLoading(false)
+      setSubId(null)
+      toast.error('Não foi possível carregar a legenda')
+    }
+    const loadVtt = () => api.getSubtitleVtt(file.path, subId)
+      .then((vtt) => { if (!cancelled) setCues(parseVtt(vtt)) })
+      .then(loaded, fail)
+
+    if (subKind === 'ass') {
+      const fonts = (infoRef.current?.fonts ?? []).map((f) => buildFontUrlSync(file.path, f.index))
+      createAssRenderer(video, buildSubtitleUrlSync(file.path, subId, 'ass'), fonts, offsetRef.current - syncRef.current.sub / 1000)
+        .then((r) => { if (cancelled) r.destroy(); else { renderer = r; subRendererRef.current = r; loaded() } })
+        // sem Worker/WebAssembly: mostra o texto do ASS como WebVTT
+        .catch(() => { if (!cancelled) void loadVtt() })
+    } else if (subKind === 'pgs') {
+      createPgsRenderer(video, buildSubtitleUrlSync(file.path, subId, 'sup'), offsetRef.current - syncRef.current.sub / 1000)
+        .then((r) => { if (cancelled) r.destroy(); else { renderer = r; subRendererRef.current = r; loaded() } })
+        .catch(fail)
+    } else {
+      void loadVtt()
+    }
+    return () => {
+      cancelled = true
+      setSubLoading(false)
+      renderer?.destroy()
+      subRendererRef.current = null
+    }
+  }, [file.path, subId, subKind])
+
+  // Legendas de texto embutidas ainda sendo extraídas (mkv grande): pergunta de
+  // novo de tempos em tempos para o menu mostrar quando ficam prontas.
+  const subsPending = !!info?.subtitles.some((t) => t.kind === 'text' && !t.external && t.ready === false)
+  useEffect(() => {
+    if (!subsPending) return
+    let tries = 0
+    const id = window.setInterval(() => {
+      if (++tries > 60) { window.clearInterval(id); return }
+      api.getMediaInfo(file.path, clientCaps()).then((fresh) => {
+        const ready = new Map((fresh.subtitles ?? []).map((t) => [t.id, t.ready]))
+        setInfo((prev) => {
+          if (!prev) return prev
+          const next = { ...prev, subtitles: prev.subtitles.map((t) => ({ ...t, ready: ready.get(t.id) ?? t.ready })) }
+          infoRef.current = next
+          return next
+        })
+      }).catch(() => {})
+    }, 6000)
+    return () => window.clearInterval(id)
+  }, [subsPending, file.path])
+
+  // O canvas da legenda segue o tempo do arquivo (tempo do <video> + base do stream) menos o ajuste da legenda
+  useEffect(() => { subRendererRef.current?.setOffset(base - sync.sub / 1000) }, [base, sync.sub])
+
+  // Legenda ativa lida a cada frame (timeupdate é grosseiro demais para falas curtas)
+  useEffect(() => {
+    if (cues.length === 0) return
+    let raf = 0
+    let last = ''
+    const tick = () => {
+      const video = videoRef.current
+      if (video) {
+        const t = offsetRef.current + video.currentTime - syncRef.current.sub / 1000
+        const text = cues.filter((c) => t >= c.start && t < c.end).map((c) => c.text).join('\n')
+        if (text !== last) {
+          last = text
+          setActiveText(text)
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [cues])
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying
+  }, [isPlaying])
+
+  // Retoma de onde o usuário parou (e dá play se veio do autoplay) assim que faixas e progresso chegaram
+  useEffect(() => {
+    if (!infoReady || !progress.ready || resumeAppliedRef.current === file.path) return
+    resumeAppliedRef.current = file.path
+    // autoplay: o próximo arquivo começa tocando (vale mesmo se o player for remontado)
+    const play = autoplayPendingPath === file.path
+    autoplayPendingPath = null
+    if (play) {
+      pendingPlayRef.current = true
+      setIsPlaying(true)
+    }
+    const t = progress.resumeAt
+    if (t === null) return
+    if (modeRef.current === 'direct') {
+      // aplicado no loadedmetadata do stream
+      startAtRef.current = t
+      lastTimeRef.current = t
+      setCurrentTime(t)
+    } else {
+      void restartRef.current(t, play, true)
+    }
+    toast(`Retomando de ${formatDuration(t)}`, {
+      action: { label: 'Do início', onClick: () => void restartRef.current(0, isPlayingRef.current || pendingPlayRef.current) },
+    })
+  }, [infoReady, progress.ready, progress.resumeAt, file.path])
+
+  // Salva a posição a cada ~10 s tocando, ao pausar e ao trocar de arquivo/fechar
+  useEffect(() => {
+    const video = videoRef.current
+    // report deste arquivo: no cleanup progressRef já aponta para o próximo
+    const report = progressRef.current.report
+    const save = (force: boolean) => {
+      if (lastTimeRef.current > 0) report(lastTimeRef.current, durationRef.current, { force })
+    }
+    const timer = setInterval(() => { if (isPlayingRef.current) save(false) }, 5000)
+    const onPause = () => save(true)
+    video?.addEventListener('pause', onPause)
+    return () => {
+      clearInterval(timer)
+      video?.removeEventListener('pause', onPause)
+      if (!video?.ended) save(true)
+    }
+  }, [file.path])
+
+  // Servidor voltou após erro: recarrega o stream e retoma da posição em que parou
+  useEffect(() => {
+    const handleRestored = () => {
+      const video = videoRef.current
+      const resume = resumeRef.current
+      if (!video || !resume) return
+      resumeRef.current = null
+
+      if (modeRef.current !== 'direct') {
+        // remux/transcode: pede o stream de novo a partir da posição salva
+        setIsPlaying(resume.wasPlaying)
+        setHasError(false)
+        restartRef.current(resume.time, resume.wasPlaying, true)
+        return
+      }
+
+      const handleLoadedForResume = () => {
+        video.currentTime = resume.time
+        setCurrentTime(resume.time)
+        if (resume.wasPlaying) {
+          setIsPlaying(true)
+          video.play().catch(() => setIsPlaying(false))
+        }
+      }
+      video.addEventListener('loadedmetadata', handleLoadedForResume, { once: true })
+
+      setHasError(false)
+      setIsLoading(true)
+      video.load()
+    }
+
+    window.addEventListener(SERVER_RESTORED_EVENT, handleRestored)
+    return () => window.removeEventListener(SERVER_RESTORED_EVENT, handleRestored)
+  }, [])
 
   // Compute the video's actual rendered box (object-fit: contain math) so the
   // controls bar can match a portrait/vertical video's width instead of
@@ -112,54 +478,66 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     if (!video) return
 
     const handleLoadedMetadata = () => {
-      setDuration(video.duration)
-      updateVideoBox()
-      if (resumeTimeRef.current > 0) {
-        video.currentTime = resumeTimeRef.current
-        resumeTimeRef.current = 0
-        video.play().catch(() => {})
+      if (modeRef.current !== 'direct') {
+        // MP4 fragmentado não informa a duração: usa a do ffprobe
+        setDuration(infoRef.current?.duration || 0)
+      } else {
+        setDuration(video.duration)
       }
+      // sem imagem e sem erro (ex.: mpeg4/wmv no Chrome): tenta o próximo modo
+      if (modeRef.current !== 'transcode' && silentFailure(infoRef.current, { videoWidth: video.videoWidth, playedSeconds: 0 })) {
+        silentCheckRef.current.checked = true
+        void fallbackRef.current('sem vídeo')
+        return
+      }
+      if (startAtRef.current !== null) {
+        // posição relativa ao início deste stream
+        video.currentTime = startAtRef.current
+        startAtRef.current = null
+      } else if (modeRef.current !== 'direct') {
+        // stream processado começa com streamLead s de silêncio antes do ponto pedido: pula para ele
+        video.currentTime = Math.max(0, -offsetRef.current)
+      }
+      if (pendingPlayRef.current) {
+        pendingPlayRef.current = false
+        video.play().catch(() => setIsPlaying(false))
+      }
+      updateVideoBox()
     }
 
     const handleTimeUpdate = () => {
-      setCurrentTime(video.currentTime)
+      if (scrubbingRef.current) return
+      const t = Math.max(0, offsetRef.current + video.currentTime)
+      lastTimeRef.current = t
+      setCurrentTime(t)
+
+      // som mudo sem erro (ac3/eac3/dts no Chrome): depois de ~1,5 s tocando sem decodificar áudio, faz fallback
+      const check = silentCheckRef.current
+      const audioBytes = (video as HTMLVideoElement & { webkitAudioDecodedByteCount?: number }).webkitAudioDecodedByteCount
+      if (check.checked || modeRef.current !== 'direct' || audioBytes === undefined || video.paused) return
+      if (check.startedAt === null) { check.startedAt = video.currentTime; return }
+      const played = video.currentTime - check.startedAt
+      if (played < 1.5) return
+      check.checked = true
+      if (silentFailure(infoRef.current, { videoWidth: video.videoWidth, audioBytes, playedSeconds: played }) === 'no-audio') {
+        void fallbackRef.current('sem áudio')
+      }
     }
 
     const handleEnded = () => {
       setIsPlaying(false)
+      const p = progressRef.current
+      const dur = durationRef.current || video.duration || lastTimeRef.current
+      p.report(dur, dur, { force: true, completed: true })
+      if (p.prefs?.autoplay === false) return
+      const next = nextPlayableIndex(filesRef.current, indexRef.current)
+      if (next !== null) setUpNext({ index: next, left: UP_NEXT_SECONDS })
     }
 
     const handleError = () => {
-      // <video src> can't go through the axios 401-refresh interceptor, so an
-      // expired access token just fails the element forever. Try one silent
-      // token refresh and src reload (resuming at the same position) before
-      // surfacing the error to the user.
-      if (!didRetryAuthRef.current) {
-        didRetryAuthRef.current = true
-        resumeTimeRef.current = video.currentTime
-        const erroredFilePath = file.path
-        api.refreshToken().then((refreshed) => {
-          // The user may have navigated to a different file while the
-          // refresh was in flight - don't clobber its <video> with this one.
-          if (currentFilePathRef.current !== erroredFilePath) {
-            return
-          }
-          if (refreshed) {
-            setHasError(false)
-            setIsLoading(true)
-            video.src = buildStreamUrlSync(file.path)
-            video.load()
-          } else {
-            setIsLoading(false)
-            setHasError(true)
-            toast.error('Failed to load video')
-          }
-        })
-        return
-      }
-      setIsLoading(false)
-      setHasError(true)
-      toast.error('Failed to load video')
+      const code = video.error?.code
+      if (code === MediaError.MEDIA_ERR_ABORTED) return
+      void fallbackRef.current(`erro ${code ?? '?'}`)
     }
 
     const handleLoadStart = () => {
@@ -192,6 +570,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     const handlePlaying = () => {
       setHasStartedPlaying(true)
       setIsLoading(false)
+      authRetriedRef.current = false // tocou: uma expiração futura pode renovar de novo
     }
 
     video.addEventListener('loadedmetadata', handleLoadedMetadata)
@@ -215,7 +594,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       video.removeEventListener('waiting', handleWaiting)
       video.removeEventListener('playing', handlePlaying)
     }
-  }, [streamUrl, hasStartedPlaying])
+  }, [src, hasStartedPlaying])
 
   const togglePlay = () => {
     const video = videoRef.current
@@ -247,13 +626,154 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     setIsMuted(newVolume === 0)
   }
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Recomeça no instante t (segundos do arquivo), opcionalmente trocando modo mínimo/faixa de áudio.
+  // direct: só reposiciona o <video>. remux: o vídeo copiado só começa em keyframe, então o stream
+  // parte do keyframe anterior e o restante é avançado no próprio <video>. transcode: começa exato em t.
+  const restartAt = async (t: number, play: boolean, reload = false, next?: { minMode?: PlaybackMode; audioSel?: number | null; audioDelay?: number }) => {
     const video = videoRef.current
     if (!video) return
+    const seq = ++seekSeqRef.current
+    const newMin = next?.minMode ?? minModeRef.current
+    const newAudio = next && 'audioSel' in next ? next.audioSel ?? null : audioSelRef.current
+    const newDelay = next?.audioDelay ?? streamDelayRef.current
+    const newMode = effectiveMode(newMin, newAudio, newDelay)
+    lastTimeRef.current = t
+    setCurrentTime(t)
 
+    if (!reload && newMode === 'direct' && modeRef.current === 'direct') {
+      video.currentTime = t
+      return
+    }
+
+    let start = 0
+    if (newMode === 'transcode') {
+      start = t
+    } else if (newMode === 'remux' && t > 0) {
+      start = await api.getKeyframe(file.path, t).catch(() => t)
+      if (seq !== seekSeqRef.current) return // outro seek chegou antes
+    }
+    // URL lida agora (não a do render): pega o token renovado
+    const newSrc = buildPlaybackUrl(buildStreamUrlSync(file.path), newMode, newAudio, start, newDelay)
+    const newBase = streamBase(newMode, start, newDelay)
+    // processado: sempre pula o silêncio inicial (streamLead); direct: só se não for o começo
+    startAtRef.current = newMode !== 'direct' || t - newBase > 0.05 ? t - newBase : null
+    pendingPlayRef.current = play
+    setIsLoading(true)
+    offsetRef.current = newBase
+    minModeRef.current = newMin
+    audioSelRef.current = newAudio
+    streamDelayRef.current = newDelay
+    setStreamDelay(newDelay)
+    setOffset(start)
+    setMinMode(newMin)
+    setAudioSel(newAudio)
+    // mesma URL (ex.: tentar de novo): o React não troca o src, então recarrega na mão
+    if (newSrc === src) video.load()
+  }
+  const restartRef = useRef(restartAt)
+  restartRef.current = restartAt
+
+  // Falhou no modo atual (erro ou falha silenciosa): sobe um degrau direct → remux → transcode.
+  // Antes confere se o servidor está de pé; se não, é queda de conexão e o reconnect retoma depois.
+  const fallback = async (why: string) => {
+    const next = nextMode(modeRef.current)
+    const resume = { time: lastTimeRef.current, wasPlaying: isPlayingRef.current || pendingPlayRef.current }
+    const serverUp = await api.getHealth().then(() => true, () => false)
+    // O token vai na URL do <video> e não passa pelo refresh do axios: se expirou,
+    // renova uma vez e recarrega no mesmo modo antes de descer de degrau.
+    if (serverUp && !authRetriedRef.current) {
+      authRetriedRef.current = true
+      const path = file.path
+      const refreshed = await api.refreshToken().catch(() => false)
+      if (currentPathRef.current !== path) return // trocou de vídeo enquanto renovava
+      if (refreshed) {
+        setAuthSeq((n) => n + 1)
+        await restartRef.current(resume.time, resume.wasPlaying, true)
+        return
+      }
+    }
+    if (!next || !serverUp) {
+      resumeRef.current = resume
+      setIsLoading(false)
+      setHasError(true)
+      toast.error(serverUp ? 'Este vídeo não pôde ser reproduzido' : 'Failed to load video')
+      return
+    }
+    if (import.meta.env.DEV) console.info(`[player] ${modeRef.current} falhou (${why}), tentando ${next}`)
+    toast.info(`${modeLabel(next)} para reproduzir no navegador`)
+    await restartRef.current(resume.time, resume.wasPlaying, true, { minMode: next })
+  }
+  const fallbackRef = useRef(fallback)
+  fallbackRef.current = fallback
+
+  // Vai para um instante (segundos do arquivo). Fora do modo direct isso pede outro stream ao servidor.
+  const seekTo = useCallback((target: number) => {
+    const video = videoRef.current
+    if (!video) return
+    const max = durationRef.current || video.duration || target
+    const t = Math.max(0, Math.min(target, max))
+    void restartRef.current(t, isPlayingRef.current)
+  }, [])
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value)
-    video.currentTime = newTime
-    setCurrentTime(newTime)
+    if (modeRef.current !== 'direct') {
+      // arrastando: só move a barra; o stream novo é pedido ao soltar
+      scrubbingRef.current = true
+      scrubValueRef.current = newTime
+      setCurrentTime(newTime)
+      return
+    }
+    seekTo(newTime)
+  }
+
+  const commitScrub = () => {
+    if (!scrubbingRef.current) return
+    scrubbingRef.current = false
+    seekTo(scrubValueRef.current)
+  }
+
+  // Troca de faixa de áudio mantendo a posição e o estado de reprodução
+  const selectAudio = (track: AudioTrack) => {
+    setMenu(null)
+    const mi = infoRef.current
+    if (!mi) return
+    const native = defaultAudio(mi)
+    // faixa nativa e tocável volta para o modo do arquivo; qualquer outra exige remux
+    const sel = native && track.order === native.order && track.playable ? null : track.order
+    void restartAt(lastTimeRef.current, isPlayingRef.current, true, { audioSel: sel })
+    saveTrackPref('audio', track.lang)
+  }
+
+  const showOsd = (text: string) => {
+    setOsd(text)
+    if (osdTimerRef.current) clearTimeout(osdTimerRef.current)
+    osdTimerRef.current = setTimeout(() => setOsd(null), 1800)
+  }
+
+  // Ajuste manual de sincronia. Legenda: aplicada na hora. Áudio: o servidor gera o stream com o som
+  // deslocado (?adelay=), então espera o usuário parar de ajustar e recarrega da posição atual.
+  const changeSync = (kind: SyncKind, ms: number) => {
+    const next = { ...syncRef.current, [kind]: clampDelay(kind, ms) }
+    syncRef.current = next
+    setSync(next)
+    saveSync(file.path, next)
+    showOsd(describeDelay(kind, next[kind]))
+    if (kind !== 'audio') return
+    if (audioDelayTimerRef.current) clearTimeout(audioDelayTimerRef.current)
+    audioDelayTimerRef.current = setTimeout(() => {
+      const want = syncRef.current.audio
+      if (want === streamDelayRef.current) return
+      void restartRef.current(lastTimeRef.current, isPlayingRef.current || pendingPlayRef.current, true, { audioDelay: want })
+    }, 600)
+  }
+  const changeSyncRef = useRef(changeSync)
+  changeSyncRef.current = changeSync
+
+  const selectSubtitle = (track: SubtitleTrack | null) => {
+    setMenu(null)
+    setSubId(track ? track.id : null)
+    saveTrackPref('sub', track ? track.lang || 'off' : 'off')
   }
 
   const toggleFullscreen = async () => {
@@ -360,6 +880,10 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     }
   }, [showControlsTemporarily])
 
+  useEffect(() => {
+    if (!showControls) setMenu(null)
+  }, [showControls])
+
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -380,6 +904,14 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
 
       const video = videoRef.current
       if (!video) return
+
+      const sk = e.ctrlKey || e.metaKey || e.altKey ? null : syncKey(e.key)
+      if (sk) {
+        e.preventDefault()
+        changeSyncRef.current(sk.kind, syncRef.current[sk.kind] + sk.dir * SYNC_STEP_MS)
+        showControlsTemporarily()
+        return
+      }
 
       switch (e.key) {
         case ' ': // Spacebar - play/pause
@@ -417,9 +949,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
             return
           }
           e.preventDefault()
-          const newTimeBack = Math.max(0, video.currentTime - 5)
-          video.currentTime = newTimeBack
-          setCurrentTime(newTimeBack)
+          seekTo(lastTimeRef.current - 5)
           showControlsTemporarily()
           break
         case 'ArrowRight':
@@ -427,9 +957,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
             return
           }
           e.preventDefault()
-          const newTimeForward = Math.min(video.duration || 0, video.currentTime + 5)
-          video.currentTime = newTimeForward
-          setCurrentTime(newTimeForward)
+          seekTo(lastTimeRef.current + 5)
           showControlsTemporarily()
           break
       }
@@ -437,7 +965,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose, showControlsTemporarily])
+  }, [onClose, showControlsTemporarily, seekTo])
 
   return (
     <div
@@ -523,7 +1051,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               </Button>
             )}
 
-            {isLoading && !hasError && (
+            {isLoading && !hasError && !broken && (
               <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/50">
                 <div className="flex flex-col items-center gap-4">
                   <Loader2 className="w-12 h-12 animate-spin text-white" />
@@ -532,18 +1060,34 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               </div>
             )}
             
+            {broken && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 p-6" data-testid="broken-media">
+                <div className="flex max-w-md flex-col items-center gap-4 text-center text-white">
+                  <FileWarning className="h-12 w-12 text-amber-400" />
+                  <p className="text-xl font-semibold">Arquivo corrompido ou incompleto</p>
+                  <p className="text-sm text-white/70">
+                    O servidor não conseguiu abrir este vídeo, então ele não vai tocar. Baixe de novo ou troque o arquivo.
+                  </p>
+                  <p className="break-words rounded bg-white/10 px-3 py-1.5 font-mono text-xs text-white/60">{broken}</p>
+                  <div className="flex flex-wrap justify-center gap-2.5 pt-1">
+                    {canGoNext && (
+                      <Button onClick={handleNext} className="gap-1.5"><ChevronRight className="h-4 w-4" />Próximo</Button>
+                    )}
+                    <Button variant="outline" className="border-white/30 bg-transparent text-white hover:bg-white/10 hover:text-white" onClick={() => setBroken(null)}>
+                      Tentar mesmo assim
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {hasError && (
               <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/50">
                 <div className="flex flex-col items-center gap-4">
                   <p className="text-white text-sm">Erro ao carregar vídeo</p>
                   <Button variant="outline" onClick={() => {
                     setHasError(false)
-                    setIsLoading(true)
-                    didRetryAuthRef.current = false
-                    if (videoRef.current) {
-                      videoRef.current.src = buildStreamUrlSync(file.path)
-                      videoRef.current.load()
-                    }
+                    void restartAt(lastTimeRef.current, false, true)
                   }}>
                     Tentar novamente
                   </Button>
@@ -553,13 +1097,14 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
             
             <video
               ref={videoRef}
-              src={streamUrl}
-              className="h-auto w-auto"
-              style={{
-                maxHeight: '100%',
-                maxWidth: '100%',
-                objectFit: 'contain'
-              }}
+              src={infoReady && progress.ready && !broken ? src : undefined}
+              data-playback-mode={mode}
+              data-time-base={base}
+              className="h-full w-full object-contain"
+              // Chrome no Android tira o vídeo da composição (overlay de hardware) quando nada
+              // translúcido o cobre — com os controles escondidos — e o canvas da legenda
+              // passa a ser composto como preto opaco por cima. Opacidade < 1 impede a promoção.
+              style={subId && (subKind === 'ass' || subKind === 'pgs') ? { opacity: 0.999 } : undefined}
               onClick={(e) => {
                 e.stopPropagation()
                 togglePlay()
@@ -568,6 +1113,76 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               preload="metadata"
             />
             
+            {subLoading && (
+              <div
+                role="status"
+                className={`pointer-events-none absolute left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-full bg-black/70 px-3.5 py-1.5 text-sm text-white transition-all duration-300 ${showControls ? 'bottom-28' : 'bottom-8'}`}
+              >
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                {info?.subtitles.find((t) => t.id === subId)?.ready === false
+                  ? 'Extraindo legenda do arquivo… (arquivos grandes levam alguns minutos)'
+                  : 'Carregando legenda…'}
+              </div>
+            )}
+
+            {(() => {
+              const intro = info?.intro
+              const t = currentTime
+              const target = intro
+                ? (t >= intro.start && t < intro.end - 2 ? intro.end : null)
+                : !info?.chapters?.length && canGoNext && duration > 600 && t > 3 && t < 180 ? t + INTRO_GUESS_S : null
+              if (target === null || broken || upNext) return null
+              return (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); seekTo(target) }}
+                  className={`absolute right-6 z-20 flex items-center gap-2 rounded-lg border border-white/40 bg-black/70 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur hover:bg-white hover:text-black ${showControls ? 'bottom-28' : 'bottom-10'}`}
+                >
+                  <SkipForward className="h-4 w-4" />
+                  {intro ? 'Pular abertura' : `Pular ${INTRO_GUESS_S} s`}
+                </button>
+              )
+            })()}
+
+            {upNext && files[upNext.index] && (
+              <div className="absolute bottom-28 right-6 z-30 w-[min(340px,calc(100%-3rem))] rounded-xl border border-white/15 bg-black/85 p-4 text-white shadow-2xl backdrop-blur" role="alertdialog" aria-label="Próximo episódio">
+                <p className="text-xs uppercase tracking-wide text-white/60">Próximo episódio em {upNext.left} s</p>
+                <p className="mt-1 line-clamp-2 text-[15px] font-semibold" title={files[upNext.index].name}>{files[upNext.index].name}</p>
+                <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/15">
+                  <div className="h-full bg-white transition-[width] duration-1000 ease-linear" style={{ width: `${((UP_NEXT_SECONDS - upNext.left) / UP_NEXT_SECONDS) * 100}%` }} />
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" className="flex-1 gap-1.5" onClick={() => playNext(upNext.index)}><Play className="h-4 w-4 fill-current" />Assistir agora</Button>
+                  <Button size="sm" variant="outline" className="border-white/30 bg-transparent text-white hover:bg-white/10 hover:text-white" onClick={() => setUpNext(null)}>Cancelar</Button>
+                </div>
+              </div>
+            )}
+
+            {osd && (
+              <div
+                data-testid="sync-osd"
+                className="pointer-events-none absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded bg-black/70 px-3 py-1 text-sm text-white"
+              >
+                {osd}
+              </div>
+            )}
+
+            {activeText && (
+              <div
+                className={`pointer-events-none absolute inset-x-0 z-10 flex justify-center px-4 transition-all duration-300 ${
+                  showControls ? 'bottom-28' : 'bottom-8'
+                }`}
+              >
+                <p
+                  data-testid="subtitle-cue"
+                  className="max-w-[90%] whitespace-pre-line rounded bg-black/60 px-3 py-1 text-center text-base leading-snug text-white sm:text-xl"
+                  style={{ textShadow: '0 1px 3px #000' }}
+                >
+                  <CueText text={activeText} />
+                </p>
+              </div>
+            )}
+
             {/* Controls Overlay - matches the video's own rendered width so it
                 doesn't overhang into the backdrop next to a portrait video */}
             <div
@@ -586,6 +1201,9 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
                   max={duration || 0}
                   value={currentTime}
                   onChange={handleSeek}
+                  onPointerUp={commitScrub}
+                  onKeyUp={commitScrub}
+                  onTouchEnd={commitScrub}
                   aria-label="Posição do vídeo"
                   className="touch-range w-full cursor-pointer appearance-none bg-transparent"
                 />
@@ -607,9 +1225,100 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
                   <span className="text-white/90 text-xs font-medium sm:text-sm">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </span>
+                  {mode !== 'direct' && (
+                    <span className="hidden truncate text-xs text-white/60 sm:inline" title={info?.playback?.reason}>
+                      {modeLabel(mode)}
+                    </span>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-1 sm:gap-3">
+                <div className="relative flex items-center gap-1 sm:gap-3">
+                  {menu && info && (
+                    <div
+                      role="menu"
+                      aria-label={menu === 'audio' ? 'Faixas de áudio' : 'Legendas'}
+                      className="absolute bottom-full right-0 mb-2 max-h-64 w-72 max-w-[80vw] overflow-y-auto rounded-md bg-black/90 py-1 text-sm text-white shadow-lg"
+                    >
+                      {menu === 'audio' && info.audio.map((t) => {
+                        const native = defaultAudio(info)
+                        const selected = audioSel === null ? t.order === native?.order : t.order === audioSel
+                        return (
+                          <button
+                            key={t.order}
+                            role="menuitemradio"
+                            aria-checked={selected}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-white/20"
+                            onClick={() => selectAudio(t)}
+                          >
+                            <Check className={`h-4 w-4 shrink-0 ${selected ? 'opacity-100' : 'opacity-0'}`} />
+                            <span className="truncate">{audioLabel(t)}</span>
+                          </button>
+                        )
+                      })}
+                      {menu === 'audio' && (
+                        <SyncRow label="Atraso do áudio" keys="J/K" value={sync.audio} onChange={(ms) => changeSync('audio', ms)} />
+                      )}
+                      {menu === 'subs' && (
+                        <>
+                          <button
+                            role="menuitemradio"
+                            aria-checked={subId === null}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-white/20"
+                            onClick={() => selectSubtitle(null)}
+                          >
+                            <Check className={`h-4 w-4 shrink-0 ${subId === null ? 'opacity-100' : 'opacity-0'}`} />
+                            Desativada
+                          </button>
+                          {info.subtitles.map((t) => (
+                            <button
+                              key={t.id}
+                              role="menuitemradio"
+                              aria-checked={subId === t.id}
+                              disabled={!t.supported}
+                              title={t.supported ? undefined : 'Formato de legenda não suportado (ex.: DVD/VobSub)'}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                              onClick={() => selectSubtitle(t)}
+                            >
+                              <Check className={`h-4 w-4 shrink-0 ${subId === t.id ? 'opacity-100' : 'opacity-0'}`} />
+                              <span className="truncate">{subtitleLabel(t)}</span>
+                              {t.kind === 'text' && !t.external && t.supported && (
+                                <span className={`ml-auto shrink-0 text-[11px] ${t.ready ? 'text-emerald-300' : 'text-white/50'}`}
+                                  title={t.ready ? 'Já extraída: abre na hora' : 'O servidor está extraindo esta legenda do arquivo'}>
+                                  {t.ready ? 'pronta' : 'preparando…'}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                          <SyncRow label="Atraso da legenda" keys="G/H" value={sync.sub} onChange={(ms) => changeSync('sub', ms)} />
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {info && info.audio.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setMenu(menu === 'audio' ? null : 'audio')}
+                      aria-label="Faixa de áudio"
+                      aria-expanded={menu === 'audio'}
+                      className="text-white hover:bg-white/20 hover:text-white"
+                    >
+                      <AudioLines className="w-5 h-5" />
+                    </Button>
+                  )}
+                  {info && info.subtitles.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setMenu(menu === 'subs' ? null : 'subs')}
+                      aria-label="Legendas"
+                      aria-expanded={menu === 'subs'}
+                      className={`text-white hover:bg-white/20 hover:text-white ${subId ? 'bg-white/20' : ''}`}
+                    >
+                      <Captions className="w-5 h-5" />
+                    </Button>
+                  )}
                   <Button 
                     variant="ghost" 
                     size="icon" 
