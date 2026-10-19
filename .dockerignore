@@ -113,6 +113,9 @@ server-go/coverage
 server-go/drivelocal.exe
 server-go/test-build.exe
 server-go/server/data/users.json
+server-go/server/data/sessions.json
+server-go/server/data/library/
+server/data/sessions.json
 docker-compose.override.yml
 
 # Documentation

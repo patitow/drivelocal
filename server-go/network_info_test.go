@@ -34,13 +34,11 @@ func TestIsAdvertisableIPv4(t *testing.T) {
 func TestNetworkInfoHandler(t *testing.T) {
 	// Create token
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "testuser",
 		UserID:    "test-user-id",
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	req := httptest.NewRequest("GET", "/api/network-info", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

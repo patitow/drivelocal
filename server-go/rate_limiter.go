@@ -24,7 +24,9 @@ var (
 const (
 	// Rate limit constants
 	DEFAULT_RATE_LIMIT_WINDOW = 60 * time.Second // 1 minute
-	DEFAULT_RATE_LIMIT_MAX    = 100              // 100 requests per minute
+	// 600/min por IP: o app abre várias consultas por tela e edições em
+	// sequência (mover vários itens) passavam fácil de 100.
+	DEFAULT_RATE_LIMIT_MAX = 600
 	AUTH_RATE_LIMIT_MAX       = 10               // 10 auth attempts per minute
 )
 

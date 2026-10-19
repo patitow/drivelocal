@@ -74,8 +74,8 @@ func TestImprovedRateLimitMiddleware(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/test", nil)
 	req.RemoteAddr = "10.9.8.7:12345"
 
-	// First 100 requests should succeed
-	for i := 0; i < 100; i++ {
+	// First DEFAULT_RATE_LIMIT_MAX requests should succeed
+	for i := 0; i < DEFAULT_RATE_LIMIT_MAX; i++ {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -83,7 +83,7 @@ func TestImprovedRateLimitMiddleware(t *testing.T) {
 		}
 	}
 
-	// 101st request should be rate limited
+	// the next one should be rate limited
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusTooManyRequests {

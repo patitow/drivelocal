@@ -27,25 +27,26 @@
   }
 
   .dark {
-    --background: 222.2 47% 12%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 47% 12%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 47% 12%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47% 12%;
-    --secondary: 217.2 32.6% 25%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 25%;
-    --muted-foreground: 215 20.2% 75%;
-    --accent: 217.2 32.6% 25%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 30%;
-    --input: 217.2 32.6% 25%;
-    --ring: 224.3 76.3% 94.1%;
+    /* Paleta da Coleção: grafite arroxeado + papel quente, acento azul-violeta */
+    --background: 230 12% 12%;
+    --foreground: 38 22% 91%;
+    --card: 231 10% 15%;
+    --card-foreground: 38 22% 91%;
+    --popover: 231 10% 15%;
+    --popover-foreground: 38 22% 91%;
+    --primary: 231 100% 74%;
+    --primary-foreground: 235 53% 15%;
+    --secondary: 231 9% 18%;
+    --secondary-foreground: 38 22% 91%;
+    --muted: 231 9% 18%;
+    --muted-foreground: 252 8% 62%;
+    --accent: 231 9% 18%;
+    --accent-foreground: 38 22% 91%;
+    --destructive: 0 62.8% 40%;
+    --destructive-foreground: 38 22% 91%;
+    --border: 233 10% 20%;
+    --input: 231 9% 18%;
+    --ring: 231 100% 74%;
   }
 }
 
@@ -62,22 +63,40 @@
   }
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar: fino, sem trilho */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-muted;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-muted-foreground/20 rounded-md;
+  background-color: hsl(var(--muted-foreground) / 0.25);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted-foreground/30;
+  background-color: hsl(var(--muted-foreground) / 0.5);
+  background-clip: content-box;
+}
+
+/* Trilhos horizontais de prateleira: sem barra, como na home do YouTube */
+.shelf-rail {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.shelf-rail::-webkit-scrollbar {
+  display: none;
 }
 
 /* File browser specific styles */

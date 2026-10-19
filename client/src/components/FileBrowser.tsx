@@ -1,8 +1,10 @@
 import { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { useRouter, useRouterState } from '@tanstack/react-router'
 import { useMediaFiles, useDownloadMultiple } from '@/hooks/useMediaFiles'
 import { useAppStore } from '@/lib/store'
 import { prefetchThumbnails, resetThumbnailStatuses } from '@/lib/thumbnailStatus'
+import { SERVER_RESTORED_EVENT } from '@/lib/reconnect'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
@@ -71,45 +73,23 @@ export function FileBrowser() {
   const { data: filesData, isLoading, error, refetch } = useMediaFiles(currentPath)
   const downloadMultiple = useDownloadMultiple()
 
-  // Initialize currentPath from URL on mount
+  // Servidor voltou após uma queda: refaz a listagem da pasta atual
   useEffect(() => {
-    const pathFromUrl = pathFromBrowserLocation(window.location.pathname, window.location.search)
-    
-    // Only update if URL has a path and currentPath is different
-    if (pathFromUrl !== currentPath) {
-      pathChangeSource.current = 'external'
-      setCurrentPath(pathFromUrl)
+    const handleRestored = () => {
+      void refetch()
     }
-  }, []) // Only run on mount
+    window.addEventListener(SERVER_RESTORED_EVENT, handleRestored)
+    return () => window.removeEventListener(SERVER_RESTORED_EVENT, handleRestored)
+  }, [refetch])
 
-  // Browser history navigation (back/forward buttons)
+  // A pasta vem do endereço (/drive/...): voltar/avançar, links e recarregar
+  // caem na mesma pasta. Navegar só muda o endereço; o estado segue a URL.
+  const router = useRouter()
+  const pathname = useRouterState({ select: (st) => st.location.pathname })
   useEffect(() => {
-    // Handle browser back/forward
-    const handlePopState = (e: PopStateEvent) => {
-      // Mark as popstate to prevent the URL update effect from running
-      pathChangeSource.current = 'popstate'
-      
-      const state = e.state as { path?: string } | null
-      let path = ''
-      
-      if (state?.path !== undefined) {
-        path = state.path
-      } else {
-        path = pathFromBrowserLocation(window.location.pathname, window.location.search)
-      }
-      
-      // Update the path - the URL update effect will handle synchronization
-      setCurrentPath(path)
-      
-      // Reset after a short delay to allow state update
-      setTimeout(() => {
-        pathChangeSource.current = 'external'
-      }, 0)
-    }
-
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [setCurrentPath])
+    const p = pathFromBrowserLocation(window.location.pathname, window.location.search)
+    if (p !== useAppStore.getState().currentPath) setCurrentPath(p)
+  }, [pathname, setCurrentPath])
 
   // Mouse button navigation (mouse 4 = back, mouse 5 = forward) and keyboard shortcuts
   useEffect(() => {
@@ -151,50 +131,9 @@ export function FileBrowser() {
     }
   }, [])
 
-  // Update URL when path changes (but not when called from popstate)
-  const isInitialMount = useRef(true)
-  const pathChangeSource = useRef<'internal' | 'external' | 'popstate'>('external')
   const parentRef = useRef<HTMLDivElement>(null)
   const [gridCols, setGridCols] = useState(2)
   
-  useEffect(() => {
-    // Skip if this is a popstate event (browser already changed the URL)
-    if (pathChangeSource.current === 'popstate') {
-      pathChangeSource.current = 'external'
-      return
-    }
-
-    if (isInitialMount.current) {
-      isInitialMount.current = false
-      // Initialize history with current path from URL or state
-      let urlPath = pathFromBrowserLocation(window.location.pathname, window.location.search)
-      if (!urlPath) {
-        urlPath = currentPath || ''
-      }
-      
-      // Update state if URL has path but state doesn't
-      if (urlPath && urlPath !== currentPath) {
-        pathChangeSource.current = 'external'
-        setCurrentPath(urlPath)
-        return
-      }
-      
-      // Ensure history state matches current path - use path-based URL
-      const newPath = urlPath || currentPath || ''
-      window.history.replaceState({ path: newPath }, '', encodeDriveUrl(newPath))
-      pathChangeSource.current = 'external'
-      return
-    }
-
-    // Only update URL if change came from internal navigation (user clicked folder/breadcrumb)
-    if (pathChangeSource.current === 'internal') {
-      window.history.pushState({ path: currentPath }, '', encodeDriveUrl(currentPath))
-    }
-    
-    // Reset to external after handling
-    pathChangeSource.current = 'external'
-  }, [currentPath, setCurrentPath])
-
   // Close context menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => {
@@ -399,10 +338,7 @@ export function FileBrowser() {
   }
 
   const handleNavigate = (path: string) => {
-    // Mark as internal change to prevent double history push
-    pathChangeSource.current = 'internal'
-    window.history.pushState({ path }, '', encodeDriveUrl(path))
-    setCurrentPath(path)
+    router.history.push(encodeDriveUrl(path))
   }
 
   const handleFileClick = (file: any) => {

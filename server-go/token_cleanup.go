@@ -22,10 +22,8 @@ func cleanupExpiredTokens() {
 	tokensMutex.Lock()
 	for token, data := range tokens {
 		if now > data.ExpiresAt {
+			// Só o access token sai aqui. O refresh token tem prazo próprio e é limpo no segundo laço.
 			delete(tokens, token)
-			if data.RefreshToken != "" {
-				delete(refreshTokens, data.RefreshToken)
-			}
 			cleaned++
 		}
 	}
@@ -41,6 +39,7 @@ func cleanupExpiredTokens() {
 
 	if cleaned > 0 {
 		logDebug("Cleaned up %d expired tokens", cleaned)
+		markSessionsDirty()
 	}
 }
 

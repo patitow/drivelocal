@@ -74,6 +74,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 		"checks":      checks,
 		"authEnabled": os.Getenv("AUTH_ENABLED") != "false",
 		"version":     "1.0.0",
+		"bootId":      bootID,
 	}
 
 	// Set appropriate status code
@@ -209,8 +210,9 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 	refreshCookie, _ := r.Cookie("refreshToken")
 	if refreshCookie != nil {
 		tokensMutex.Lock()
-		delete(refreshTokens, refreshCookie.Value)
+		delete(refreshTokens, hashToken(refreshCookie.Value))
 		tokensMutex.Unlock()
+		markSessionsDirty()
 	}
 
 	http.SetCookie(w, &http.Cookie{Name: "accessToken", MaxAge: -1, Path: "/"})
@@ -398,7 +400,7 @@ func filesHandler(w http.ResponseWriter, r *http.Request) {
 		isDir := resolvedIsDir(itemPath, entry)
 
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		isVideo := contains([]string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v"}, ext)
+		isVideo := contains([]string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v", ".m2ts", ".mts", ".mpg", ".mpeg"}, ext)
 		isImage := contains([]string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".tiff"}, ext)
 
 		itemData := map[string]interface{}{
@@ -579,6 +581,11 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if needsRemux(r) {
+		streamProcessed(w, r, fullPath, info)
+		return
+	}
+
 	file, err := os.Open(fullPath)
 	if err != nil {
 		logError("Failed to open file: %v", err)
@@ -588,62 +595,11 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	w.Header().Set("Content-Type", getMimeType(fullPath))
-	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
-
-	// Handle range requests
-	rangeHeader := r.Header.Get("Range")
-	if rangeHeader != "" {
-		// Parse range
-		var start, end int64
-		fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end)
-		if end == 0 {
-			end = info.Size() - 1
-		}
-
-		if start < 0 || end >= info.Size() || start > end {
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", info.Size()))
-			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-			return
-		}
-
-		file.Seek(start, 0)
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, info.Size()))
-		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
-		w.WriteHeader(http.StatusPartialContent)
-
-		// Stream directly with context cancellation support
-		// Use io.CopyN with a custom writer that checks context
-		written, err := io.CopyN(w, file, end-start+1)
-		if err != nil {
-			// Check if error is due to client disconnection
-			if ctx.Err() != nil {
-				logDebug("Client disconnected during range stream: %v", ctx.Err())
-			} else {
-				logError("Error streaming range: %v (written: %d bytes)", err, written)
-			}
-			return
-		}
-		logDebug("Streamed range %d-%d: %d bytes", start, end, written)
-	} else {
-		w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-
-		// Stream directly - io.Copy will handle client disconnection automatically
-		// The http.ResponseWriter will return an error if client disconnects
-		written, err := io.Copy(w, file)
-		if err != nil {
-			// Check if error is due to client disconnection
-			if ctx.Err() != nil {
-				logDebug("Client disconnected during stream: %v", ctx.Err())
-			} else {
-				logError("Error streaming file: %v (written: %d/%d bytes)", err, written, info.Size())
-			}
-			return
-		}
-		logDebug("Streamed file: %d/%d bytes", written, info.Size())
-	}
+	// ServeContent trata Range (inclusive "bytes=-N" e múltiplos), If-Range, HEAD e 416
+	http.ServeContent(w, r.WithContext(ctx), "", info.ModTime(), file)
 }
 
 // Download multiple files as ZIP (streaming to avoid memory issues)
@@ -843,7 +799,7 @@ func thumbnailHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Determine file type
 	ext := strings.ToLower(filepath.Ext(fullPath))
-	isVideo := contains([]string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v"}, ext)
+	isVideo := contains([]string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v", ".m2ts", ".mts", ".mpg", ".mpeg"}, ext)
 	isImage := contains([]string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".tiff"}, ext)
 
 	// Log for debugging
@@ -991,7 +947,7 @@ func thumbnailBatchStatus(rel string) string {
 	}
 
 	ext := strings.ToLower(filepath.Ext(fullPath))
-	isVideo := contains([]string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v"}, ext)
+	isVideo := contains([]string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v", ".m2ts", ".mts", ".mpg", ".mpeg"}, ext)
 	isImage := contains([]string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".tiff"}, ext)
 	pool := GetThumbnailPool()
 
@@ -1222,6 +1178,11 @@ func updateUserHandler(w http.ResponseWriter, r *http.Request) {
 					users[i].Permissions = append(users[i].Permissions, p.(string))
 				}
 			}
+			deactivated := false
+			if active, ok := req["active"].(bool); ok {
+				users[i].Active = active
+				deactivated = !active
+			}
 			if err := saveUsers(); err != nil {
 				usersMutex.Unlock()
 				logError("Failed to save user: %v", err)
@@ -1229,6 +1190,9 @@ func updateUserHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			usersMutex.Unlock()
+			if deactivated {
+				revokeUserTokens(id)
+			}
 
 			jsonResponse(w, map[string]interface{}{
 				"success": true,
@@ -1278,6 +1242,7 @@ func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
 		return
 	}
+	revokeUserTokens(id)
 
 	jsonResponse(w, map[string]interface{}{
 		"success": true,
@@ -1354,6 +1319,7 @@ func resetPasswordHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	saved := false
 	usersMutex.Lock()
 	for i := range users {
 		if users[i].ID == user.ID {
@@ -1366,10 +1332,16 @@ func resetPasswordHandler(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, `{"error":"Failed to reset password"}`, http.StatusInternalServerError)
 				return
 			}
+			saved = true
 			break
 		}
 	}
 	usersMutex.Unlock()
+
+	// Senha trocada: derruba as sessões abertas com a senha antiga.
+	if saved {
+		revokeUserTokens(user.ID)
+	}
 
 	jsonResponse(w, map[string]interface{}{
 		"success": true,

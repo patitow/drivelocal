@@ -1,12 +1,13 @@
 import { AuthProvider } from '@/contexts/AuthContext'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-import { AppShell } from '@/components/AppShell'
+import { RouterProvider } from '@tanstack/react-router'
+import { router } from '@/router'
 
 export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <AppShell />
+        <RouterProvider router={router} />
       </AuthProvider>
     </ErrorBoundary>
   )

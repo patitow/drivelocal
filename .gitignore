@@ -100,9 +100,18 @@ ssl/
 *.backup
 *.jpg
 server-go/server/data/users.json
+server-go/server/data/sessions.json
+server/data/sessions.json
+# Biblioteca (catálogo, regras, golden set): nunca no git
+server-go/server/data/library/
+server/data/library/
 docker-compose.override.yml
 media/*
 !media/.gitkeep
 playwright-report/
 test-results/
 .playwright-mcp/
+
+# Helper de montagem (host-helper/)
+host-helper/data/
+host-helper/*.exe

@@ -82,7 +82,7 @@ func TestGetThumbnailPath(t *testing.T) {
 }
 
 func TestFfmpegVideoKeyframeArgsSeekBeforeInput(t *testing.T) {
-	args := ffmpegVideoKeyframeArgs("in.mkv", "out.jpg")
+	args := ffmpegVideoKeyframeArgs("in.mkv", "out.jpg", 90)
 
 	ssIdx, inputIdx := -1, -1
 	for i, arg := range args {
@@ -103,7 +103,7 @@ func TestFfmpegVideoKeyframeArgsSeekBeforeInput(t *testing.T) {
 }
 
 func TestFfmpegVideoKeyframeArgsSkipAudio(t *testing.T) {
-	args := ffmpegVideoKeyframeArgs("in.mkv", "out.jpg")
+	args := ffmpegVideoKeyframeArgs("in.mkv", "out.jpg", 90)
 	for _, arg := range args {
 		if arg == "-an" {
 			return

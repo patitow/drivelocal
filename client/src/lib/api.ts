@@ -1,6 +1,7 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from 'axios'
-import type { ApiResponse, HealthResponse, NetworkInfo, DirectoryInfo, LoginRequest, LoginResponse, AuthStatus, User, CreateUserRequest, UpdateUserRequest } from '@/types'
+import type { ApiResponse, HealthResponse, NetworkInfo, DirectoryInfo, LoginRequest, LoginResponse, AuthStatus, User, CreateUserRequest, UpdateUserRequest, MountsResponse, BrowseResponse, MountJob, MountJobAccepted, MediaInfo } from '@/types'
 import { encodeMediaPath } from '@/lib/mediaPath'
+import { SERVER_UNAVAILABLE_EVENT, isServerUnavailableError } from '@/lib/reconnect'
 
 // Use port 80 in production (same as frontend), 3000/5000 in development
 const getApiBaseUrl = () => {
@@ -116,7 +117,12 @@ class ApiClient {
       },
       async (error) => {
         const originalRequest = error.config
-        
+
+        // Servidor indisponível (rede caiu, container reiniciando, proxy 502/503/504)
+        if (isServerUnavailableError(error)) {
+          window.dispatchEvent(new Event(SERVER_UNAVAILABLE_EVENT))
+        }
+
         // Don't retry auth endpoints or if already retried
         const isAuthEndpoint = originalRequest?.url?.includes('/api/auth/')
         const isLoginEndpoint = originalRequest?.url?.includes('/api/auth/login')
@@ -313,25 +319,12 @@ class ApiClient {
   }
 
   async getAuthStatus(): Promise<AuthStatus> {
-    try {
-      const response = await this.client.get<AuthStatus>('/api/auth/status', {
-        withCredentials: true
-      })
-      return response.data
-    } catch (error: any) {
-      // If 401, user is not authenticated - don't try refresh here
-      // The interceptor will handle refresh for other endpoints
-      if (error.response?.status === 401) {
-        throw error // Re-throw to let caller handle
-      }
-      
-      // For other errors, return not authenticated
-      return {
-        authenticated: false,
-        username: null,
-        authEnabled: true
-      }
-    }
+    // Erros propagam (inclusive não-401) para o chamador decidir: só 401 significa "não logado".
+    // Antes, erros de rede viravam authenticated:false e deslogavam o usuário.
+    const response = await this.client.get<AuthStatus>('/api/auth/status', {
+      withCredentials: true
+    })
+    return response.data
   }
 
   async checkHealth(): Promise<HealthResponse> {
@@ -357,6 +350,71 @@ class ApiClient {
 
   async deleteUser(id: string): Promise<void> {
     await this.client.delete(`/api/users/${id}`)
+  }
+
+  // Montagem de pastas do host (Admin only)
+  async getMounts(): Promise<MountsResponse> {
+    const response = await this.client.get<MountsResponse>('/api/admin/mounts')
+    return response.data
+  }
+
+  // path omitido -> lista os drives
+  async browseHostFolders(path?: string): Promise<BrowseResponse> {
+    const response = await this.client.get<BrowseResponse>('/api/admin/mounts/browse', {
+      params: { path },
+    })
+    return response.data
+  }
+
+  async addMount(input: { hostPath: string; name?: string; baseRevision: string }): Promise<MountJobAccepted> {
+    const response = await this.client.post<MountJobAccepted>('/api/admin/mounts', input)
+    return response.data
+  }
+
+  async removeMount(name: string, baseRevision: string): Promise<MountJobAccepted> {
+    const response = await this.client.delete<MountJobAccepted>(
+      `/api/admin/mounts/${encodeURIComponent(name)}`,
+      { params: { baseRevision } }
+    )
+    return response.data
+  }
+
+  async getMountJob(id: string): Promise<MountJob> {
+    const response = await this.client.get<MountJob>(`/api/admin/mounts/jobs/${encodeURIComponent(id)}`)
+    return response.data
+  }
+
+  // caps = codecs que este navegador toca; o servidor devolve playback (direct/remux/transcode)
+  async getMediaInfo(filePath: string, caps?: string): Promise<MediaInfo> {
+    const response = await this.client.get<MediaInfo>(`/api/media-info/${encodeMediaPath(filePath)}`, {
+      params: caps ? { caps } : undefined,
+    })
+    return response.data
+  }
+
+  // Keyframe em ou após t: no remux o vídeo copiado só começa em keyframe
+  async getKeyframe(filePath: string, t: number): Promise<number> {
+    const response = await this.client.get<{ time: number }>(`/api/keyframe/${encodeMediaPath(filePath)}`, {
+      params: { t: t.toFixed(3) },
+    })
+    return response.data.time
+  }
+
+  // Legenda de texto convertida para WebVTT pelo servidor
+  async getSubtitleVtt(filePath: string, id: string): Promise<string> {
+    const response = await this.client.get<string>(`/api/subtitle/${encodeMediaPath(filePath)}`, {
+      params: { id },
+      responseType: 'text',
+      // Num mkv grande o servidor lê o arquivo inteiro para extrair (pode passar de 1 min).
+      timeout: 10 * 60 * 1000,
+    })
+    return response.data
+  }
+
+  // bootId muda a cada boot do servidor; null se o servidor não informar (versão antiga)
+  async getBootId(): Promise<string | null> {
+    const health = await this.getHealth()
+    return health.bootId ?? null
   }
 }
 

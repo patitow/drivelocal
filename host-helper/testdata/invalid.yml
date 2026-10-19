@@ -1,0 +1,5 @@
+services:
+  drivelocal:
+    volumes:
+      - "E:/Filmes:/data/Filmes:ro"
+    environment: [TZ=America/Sao_Paulo

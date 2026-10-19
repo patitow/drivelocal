@@ -69,10 +69,11 @@ export function Thumbnail({ file, className, size = 'md' }: ThumbnailProps) {
   }
 
   const handleImageError = () => {
-    if (consumeThumbnailRetry(file.path)) {
+    const wait = consumeThumbnailRetry(file.path)
+    if (wait != null) {
       setImageError(false)
       setImageLoading(true)
-      window.setTimeout(() => setReloadNonce(1), 800)
+      window.setTimeout(() => setReloadNonce((n) => n + 1), wait)
       return
     }
     setImageError(true)

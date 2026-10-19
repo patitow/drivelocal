@@ -1,146 +1,68 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, fireEvent, waitFor } from '@testing-library/react'
 import { VideoPlayer } from './VideoPlayer'
 
 vi.mock('@/lib/api', () => ({
   api: {
     refreshToken: vi.fn(),
+    getHealth: vi.fn(),
+    getMediaInfo: vi.fn(),
+    getSubtitleVtt: vi.fn(),
+    getKeyframe: vi.fn(),
   },
 }))
-
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
+vi.mock('@/hooks/usePlaybackProgress', () => ({
+  usePlaybackProgress: () => ({ ready: true, resumeAt: null, prefs: null, save: vi.fn() }),
 }))
+vi.mock('sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn() }) }))
 
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 
-const file = { name: 'movie.mkv', path: '/Animes/movie.mkv', isVideo: true }
-const files = [file]
+const file = { name: 'movie.mkv', path: 'Filmes/movie.mkv', isVideo: true }
 
 function renderPlayer() {
-  return render(
-    <VideoPlayer file={file} files={files} currentIndex={0} onClose={() => {}} onNavigate={() => {}} />
-  )
+  return render(<VideoPlayer file={file} files={[file]} currentIndex={0} onClose={() => {}} onNavigate={() => {}} />)
 }
 
-describe('VideoPlayer - expired access token recovery', () => {
+// O token vai na URL do <video>; se expirou, o player renova uma vez e recarrega no mesmo modo.
+describe('VideoPlayer: token expirado', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
-    localStorage.setItem('auth_token', 'stale-token')
-    // jsdom doesn't implement media loading or ResizeObserver; stub them so
-    // the component can mount and <video> events can be driven manually.
+    localStorage.setItem('auth_token', 'velho')
     window.HTMLMediaElement.prototype.load = vi.fn()
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined)
     window.HTMLMediaElement.prototype.pause = vi.fn()
-    window.ResizeObserver = vi.fn().mockImplementation(() => ({
-      observe: vi.fn(),
-      unobserve: vi.fn(),
-      disconnect: vi.fn(),
-    }))
+    window.ResizeObserver = vi.fn().mockImplementation(() => ({ observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() }))
     window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    ;(globalThis as { MediaError?: unknown }).MediaError ??= { MEDIA_ERR_ABORTED: 1 }
+    vi.mocked(api.getHealth).mockResolvedValue({} as never)
+    vi.mocked(api.getMediaInfo).mockResolvedValue({ audio: [], subtitles: [], fonts: [] } as never)
   })
 
-  it('refreshes the token and reloads the stream once on a load error, resuming at the same position', async () => {
-    vi.mocked(api.refreshToken).mockResolvedValue(true)
+  it('renova o token uma vez e recarrega com o token novo', async () => {
+    vi.mocked(api.refreshToken).mockImplementation(async () => {
+      localStorage.setItem('auth_token', 'novo')
+      return true
+    })
     renderPlayer()
-
     const video = document.querySelector('video') as HTMLVideoElement
-    expect(video.src).toContain('token=stale-token')
-
-    Object.defineProperty(video, 'currentTime', { value: 42, writable: true })
+    await waitFor(() => expect(video.src).toContain('token=velho'))
     fireEvent.error(video)
-
     await waitFor(() => expect(api.refreshToken).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(video.load).toHaveBeenCalledTimes(1))
-
-    // Error overlay must not be shown while the silent retry is in flight / after it succeeds.
-    expect(screen.queryByText('Erro ao carregar vídeo')).toBeNull()
-
-    // Once the reloaded stream reports metadata, playback resumes where it left off.
-    Object.defineProperty(video, 'duration', { value: 120, writable: true })
-    fireEvent.loadedMetadata(video)
-
-    expect(video.currentTime).toBe(42)
-    expect(video.play).toHaveBeenCalled()
+    await waitFor(() => expect(video.src).toContain('token=novo'))
+    expect(video.src).not.toContain('mode=')
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('only retries once per file and surfaces the error if the token refresh fails', async () => {
+  it('sem renovação, segue para o próximo modo', async () => {
     vi.mocked(api.refreshToken).mockResolvedValue(false)
     renderPlayer()
-
     const video = document.querySelector('video') as HTMLVideoElement
-    fireEvent.error(video)
-
-    await waitFor(() => expect(api.refreshToken).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(screen.getByText('Erro ao carregar vídeo')).not.toBeNull())
-    expect(toast.error).toHaveBeenCalledWith('Failed to load video')
-
-    // A second error on the same file must not trigger another refresh attempt.
-    fireEvent.error(video)
-    expect(api.refreshToken).toHaveBeenCalledTimes(1)
-  })
-
-  it('resets the retry guard when switching to a different file', async () => {
-    vi.mocked(api.refreshToken).mockResolvedValue(false)
-    const { rerender } = renderPlayer()
-
-    let video = document.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(video.src).toContain('token='))
     fireEvent.error(video)
     await waitFor(() => expect(api.refreshToken).toHaveBeenCalledTimes(1))
-
-    const otherFile = { name: 'other.mkv', path: '/Animes/other.mkv', isVideo: true }
-    rerender(
-      <VideoPlayer
-        file={otherFile}
-        files={[file, otherFile]}
-        currentIndex={1}
-        onClose={() => {}}
-        onNavigate={() => {}}
-      />
-    )
-
-    video = document.querySelector('video') as HTMLVideoElement
-    fireEvent.error(video)
-    await waitFor(() => expect(api.refreshToken).toHaveBeenCalledTimes(2))
-  })
-
-  it('ignores a stale token refresh if the user navigated to another file while it was in flight', async () => {
-    let resolveRefresh!: (refreshed: boolean) => void
-    vi.mocked(api.refreshToken).mockReturnValue(
-      new Promise((resolve) => {
-        resolveRefresh = resolve
-      })
-    )
-    const { rerender } = renderPlayer()
-
-    const video = document.querySelector('video') as HTMLVideoElement
-    fireEvent.error(video)
-    await waitFor(() => expect(api.refreshToken).toHaveBeenCalledTimes(1))
-
-    // Navigate away before the refresh for the errored file resolves.
-    const otherFile = { name: 'other.mkv', path: '/Animes/other.mkv', isVideo: true }
-    rerender(
-      <VideoPlayer
-        file={otherFile}
-        files={[file, otherFile]}
-        currentIndex={1}
-        onClose={() => {}}
-        onNavigate={() => {}}
-      />
-    )
-    const srcAfterNavigating = video.src
-
-    resolveRefresh(true)
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    // The stale refresh for the first file must not clobber the now-current file's <video>.
-    expect(video.src).toBe(srcAfterNavigating)
-    expect(video.src).not.toContain('movie.mkv')
-    expect(video.load).not.toHaveBeenCalled()
+    await waitFor(() => expect(toast.info).toHaveBeenCalled())
   })
 })

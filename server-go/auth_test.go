@@ -107,13 +107,11 @@ func TestAuthStatusHandler(t *testing.T) {
 	usersMutex.Unlock()
 
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "testuser",
 		UserID:    userID,
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	// Test with valid token
 	req := httptest.NewRequest("GET", "/api/auth/status", nil)
@@ -152,13 +150,11 @@ func TestAuthStatusHandler(t *testing.T) {
 func TestLogoutHandler(t *testing.T) {
 	// Setup
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "testuser",
 		UserID:    "test-user-id",
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	req := httptest.NewRequest("POST", "/api/auth/logout", nil)
 	req.AddCookie(&http.Cookie{
@@ -175,7 +171,7 @@ func TestLogoutHandler(t *testing.T) {
 
 	// Verify token was removed
 	tokensMutex.RLock()
-	_, exists := tokens[token]
+	_, exists := tokens[hashToken(token)]
 	tokensMutex.RUnlock()
 
 	if exists {
@@ -206,13 +202,11 @@ func TestRefreshHandler(t *testing.T) {
 	usersMutex.Unlock()
 
 	refreshToken := generateToken(32)
-	tokensMutex.Lock()
-	refreshTokens[refreshToken] = &TokenData{
+	putTestRefreshToken(refreshToken, &TokenData{
 		Username:  "testuser",
 		UserID:    "test-user-id",
 		ExpiresAt: time.Now().Add(7 * 24 * time.Hour).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	req := httptest.NewRequest("POST", "/api/auth/refresh", nil)
 	req.AddCookie(&http.Cookie{
@@ -343,13 +337,11 @@ func TestAuthMiddlewareMediaToken(t *testing.T) {
 	t.Setenv("NODE_ENV", "production")
 
 	token := generateToken(32)
-	tokensMutex.Lock()
-	tokens[token] = &TokenData{
+	putTestAccessToken(token, &TokenData{
 		Username:  "testuser",
 		UserID:    "test-user-id",
 		ExpiresAt: time.Now().Add(15 * time.Minute).UnixMilli(),
-	}
-	tokensMutex.Unlock()
+	})
 
 	okHandler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

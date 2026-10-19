@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
@@ -36,10 +40,10 @@ type User struct {
 
 // Token storage
 type TokenData struct {
-	Username     string
-	UserID       string
-	ExpiresAt    int64
-	RefreshToken string
+	Username     string `json:"username"`
+	UserID       string `json:"userId"`
+	ExpiresAt    int64  `json:"expiresAt"`
+	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
 var (
@@ -80,6 +84,8 @@ func main() {
 	// Initialize
 	ensureDirectories()
 	loadUsers()
+	loadSessions()
+	initLibrary() // biblioteca (library_*.go); falha só desativa o catálogo
 
 	// Initialize thumbnail worker pool
 	GetThumbnailPool()
@@ -113,12 +119,17 @@ func main() {
 	// Protected routes
 	protected := r.PathPrefix("/api").Subrouter()
 	protected.Use(authMiddleware)
+	protected.Use(libraryAccessMiddleware) // maturidade/ocultação por usuário
 	protected.HandleFunc("/auth/status", authStatusHandler).Methods("GET")
 	protected.HandleFunc("/auth/logout", logoutHandler).Methods("POST")
 	protected.HandleFunc("/files", filesHandler).Methods("GET")
 	protected.HandleFunc("/download/{path:.*}", downloadHandler).Methods("GET")
 	protected.HandleFunc("/download-multiple", downloadMultipleHandler).Methods("POST")
 	protected.HandleFunc("/stream/{path:.*}", streamHandler).Methods("GET")
+	protected.HandleFunc("/media-info/{path:.*}", mediaInfoHandler).Methods("GET")
+	protected.HandleFunc("/subtitle/{path:.*}", subtitleHandler).Methods("GET")
+	protected.HandleFunc("/media-font/{path:.*}", mediaFontHandler).Methods("GET")
+	protected.HandleFunc("/keyframe/{path:.*}", keyframeHandler).Methods("GET")
 	protected.HandleFunc("/thumbnails", thumbnailsBatchHandler).Methods("POST")
 	protected.HandleFunc("/thumbnail/{path:.*}", thumbnailHandler).Methods("GET")
 	protected.HandleFunc("/network-info", networkInfoHandler).Methods("GET")
@@ -130,6 +141,18 @@ func main() {
 	admin.HandleFunc("", createUserHandler).Methods("POST")
 	admin.HandleFunc("/{id}", updateUserHandler).Methods("PUT")
 	admin.HandleFunc("/{id}", deleteUserHandler).Methods("DELETE")
+
+	// Admin mount routes (proxy para o helper de montagem no host)
+	mounts := protected.PathPrefix("/admin/mounts").Subrouter()
+	mounts.Use(requireRole("admin"))
+	mounts.HandleFunc("", adminMountsListHandler).Methods("GET")
+	mounts.HandleFunc("", adminMountsCreateHandler).Methods("POST")
+	mounts.HandleFunc("/browse", adminMountsBrowseHandler).Methods("GET")
+	mounts.HandleFunc("/jobs/{id}", adminMountsJobHandler).Methods("GET")
+	mounts.HandleFunc("/{name:.+}", adminMountsDeleteHandler).Methods("DELETE")
+
+	// Biblioteca: catálogo, favoritos, progresso, playlists, admin (library_handlers.go)
+	registerLibraryRoutes(protected)
 
 	// Static files (serve React build)
 	// Only serve static files for non-API routes
@@ -175,8 +198,25 @@ func main() {
 	}
 	logInfo("💻 Loopback: http://127.0.0.1:8080/ if wslrelay is holding 127.0.0.1:80")
 
-	if err := http.ListenAndServe(addr, r); err != nil {
-		log.Fatal("Server failed:", err)
+	srv := &http.Server{Addr: addr, Handler: r}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("Server failed:", err)
+		}
+	}()
+
+	// Graceful shutdown: para de aceitar conexões e grava as sessões antes de sair.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+	logInfo("Encerrando servidor...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logWarn("Shutdown HTTP incompleto: %v", err)
+	}
+	if err := flushSessions(); err != nil {
+		logError("Falha ao gravar sessões no shutdown: %v", err)
 	}
 }
 

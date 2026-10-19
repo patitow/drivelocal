@@ -41,6 +41,10 @@ if defined HOST_LAN_IP (
   echo HOST_LAN_IP=%HOST_LAN_IP%
 )
 
+REM Garantir que o helper de montagem de pastas (host) esteja rodando
+REM (ignora erro se a tarefa nao existir)
+schtasks /Run /TN "DriveLocal Mount Helper" >nul 2>&1
+
 REM Construir imagem se necessário
 docker compose build --quiet
 
