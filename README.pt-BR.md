@@ -49,7 +49,7 @@ Pasta cheia de `.mkv` não é biblioteca. O DriveLocal varre suas pastas e trans
 - **Detecção de duplicatas** de séries e criadores escritos de jeitos diferentes (token set ratio, Jaro-Winkler e contenção), com fusão que guarda os apelidos e pode ser desfeita
 - **Regras, operações em lote com dry-run, histórico e desfazer** para tudo que altera o catálogo
 
-![Como o DriveLocal se conecta](./docs/assets/architecture.pt-BR.png)
+![Como o DriveLocal se conecta](./docs/assets/architecture.png)
 
 ### Pensado para agentes
 
