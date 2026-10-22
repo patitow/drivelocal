@@ -44,7 +44,7 @@ Pasta cheia de `.mkv` não é biblioteca. O DriveLocal varre suas pastas e trans
 ### Curadoria com IA, sob seu controle
 
 - **Classificação por IA local**: um modelo que você mesmo roda (qualquer endpoint compatível com OpenAI, como llama.cpp ou llama-swap) lê o nome do arquivo e, se precisar, um frame do vídeo, e propõe título, série, temporada, episódio e tags
-- A resposta segue um **JSON schema**, o trabalho só roda **dentro de uma janela de horário** (de madrugada, por exemplo) e **tudo vira sugestão**: nada muda no catálogo até você aceitar na fila de revisão
+- A resposta segue um **JSON schema**, o trabalho só roda **dentro de uma janela de horário** (de madrugada, por exemplo) e **o que a IA tem certeza, ela aplica sozinha**: respostas com confiança a partir do limiar (`AI_AUTO_ACCEPT`, 0.9 por padrão) entram com histórico e desfazer, e o resto espera você na fila de revisão
 - A qualidade é medida contra um **golden set** (`eval`), para comparar mudanças de prompt ou de modelo
 - **Detecção de duplicatas** de séries e criadores escritos de jeitos diferentes (token set ratio, Jaro-Winkler e contenção), com fusão que guarda os apelidos e pode ser desfeita
 - **Regras, operações em lote com dry-run, histórico e desfazer** para tudo que altera o catálogo
@@ -113,6 +113,7 @@ Abra http://localhost (ou http://127.0.0.1:8080 se a porta 80 estiver ocupada). 
 | `AI_API_KEY` | Chave desse endpoint | vazio |
 | `AI_TEXT_MODEL` / `AI_VISION_MODEL` | Modelos de texto e visão | ver `.env.example` |
 | `AI_WINDOW` / `AI_TZ` | Quando a IA pode rodar | `01:00-08:00` |
+| `AI_AUTO_ACCEPT` | Confiança a partir da qual as sugestões da IA são aplicadas sem revisão (`0` desliga) | `0.9` |
 
 As chaves ficam só no `.env`, que está no `.gitignore`.
 

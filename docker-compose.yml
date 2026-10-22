@@ -36,6 +36,7 @@ services:
       - AI_WINDOW=${AI_WINDOW:-01:00-08:00}
       - AI_TZ=${AI_TZ:-America/Sao_Paulo}
       - AI_ENABLED=${AI_ENABLED:-true}
+      - AI_AUTO_ACCEPT=${AI_AUTO_ACCEPT:-0.9}
       # Metadados de filmes (capa/sinopse). Sem chave, filmes usam só o AniList.
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - MAL_CLIENT_ID=${MAL_CLIENT_ID:-}

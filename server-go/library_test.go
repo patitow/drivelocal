@@ -636,3 +636,45 @@ func TestLibraryAccessBypassAttempts(t *testing.T) {
 		t.Fatalf("caminho permitido bloqueado: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Aceite automático: confiança alta aplica sozinha (menos maturidade), baixa
+// fica pendente, e o lote pode ser desfeito.
+func TestAIAutoAccept(t *testing.T) {
+	fx := newLibFixture(t)
+	l, ctx := fx.l, context.Background()
+	film := fx.ids["Filmes/Filme Teste (2020).mp4"]
+	title := func() string {
+		var s string
+		l.r.QueryRow(`SELECT COALESCE(title_manual, title) FROM media WHERE id=?`, film).Scan(&s)
+		return s
+	}
+	before := title()
+
+	if err := l.storeSuggestions(ctx, film, "m", &AIOutput{Title: "Talvez", Maturity: "sugestivo", Confidence: 0.5}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := l.autoAcceptSuggestions(ctx, film, 0.9)
+	if err != nil || res.Accepted != 0 || title() != before {
+		t.Fatalf("confiança baixa foi aplicada: %v %+v", err, res)
+	}
+	l.w.Exec(`DELETE FROM suggestions`)
+
+	if err := l.storeSuggestions(ctx, film, "m", &AIOutput{Title: "Título Certo", Maturity: "sugestivo", Confidence: 0.95}); err != nil {
+		t.Fatal(err)
+	}
+	res, err = l.autoAcceptSuggestions(ctx, film, 0.9)
+	if err != nil || res.Accepted != 1 || title() != "Título Certo" {
+		t.Fatalf("aceite automático: %v %+v %q", err, res, title())
+	}
+	var pending int
+	l.r.QueryRow(`SELECT COUNT(*) FROM suggestions WHERE kind='maturity' AND status='pending'`).Scan(&pending)
+	if pending != 1 {
+		t.Fatal("maturidade não ficou para revisão")
+	}
+	if _, err := l.Undo(ctx, res.BatchID, "adm"); err != nil || title() != before {
+		t.Fatalf("undo: %v %q", err, title())
+	}
+	if parseAutoAccept("0") != 0 || parseAutoAccept("1.5") != 0 || parseAutoAccept("x") != 0 || parseAutoAccept("0.85") != 0.85 {
+		t.Fatal("parseAutoAccept")
+	}
+}
