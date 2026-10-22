@@ -40,6 +40,25 @@ export function pickSubtitleByLang(info: MediaInfo, lang: string | null): Subtit
   return matches.find((s) => !isPartial(s)) ?? matches[0]
 }
 
+// Faixa escolhida guardada no progresso (servidor) como "idioma|título": o título separa, por
+// exemplo, "PTBR (WEB-DL)" de "ENG" quando o arquivo marca as duas como o mesmo idioma.
+export function encodeAudioPref(t: AudioTrack): string {
+  return t.title ? `${t.lang}|${t.title}` : t.lang
+}
+
+export function pickAudioByPref(info: MediaInfo, pref: string | null | undefined): AudioTrack | undefined {
+  if (!pref) return undefined
+  const cut = pref.indexOf('|')
+  const lang = cut < 0 ? pref : pref.slice(0, cut)
+  const title = cut < 0 ? '' : pref.slice(cut + 1)
+  if (title) {
+    const byTitle = info.audio.filter((a) => a.title === title)
+    const hit = byTitle.find((a) => a.lang === lang) ?? byTitle[0]
+    if (hit) return hit
+  }
+  return pickAudioByLang(info, lang)
+}
+
 const PREF_KEY_AUDIO = 'player_audio_lang'
 const PREF_KEY_SUB = 'player_sub_lang' // 'off' = sem legenda
 

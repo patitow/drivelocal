@@ -126,6 +126,10 @@ func (l *Library) Scan(ctx context.Context, root string) (*ScanReport, error) {
 		} else if d.Suggested > 0 {
 			logInfo("📚 %d possíveis tópicos duplicados para revisar", d.Suggested)
 		}
+		// o que sumiu do disco sai do banco (raiz desmontada não conta)
+		if _, perr := l.purgeGone(ctx); perr != nil {
+			logWarn("Limpeza de arquivos sumidos: %v", perr)
+		}
 		l.invalidateHome("")
 	}
 	return rep, err
@@ -288,6 +292,37 @@ func (l *Library) scan(ctx context.Context, root string, rep *ScanReport) error 
 		return nil
 	}
 	return l.postProcess(ctx, touched)
+}
+
+// backfillAutoTopics põe nos tópicos automáticos os arquivos que ficaram sem
+// nenhum (regra de pasta nova, como Series/): o scan só reprocessa o que mudou.
+// Item tirado à mão e tópico excluído não voltam (exclusões e bloqueios).
+func (l *Library) backfillAutoTopics(ctx context.Context) {
+	rows, err := l.r.QueryContext(ctx, `SELECT id, path FROM media m WHERE m.missing = 0
+		AND NOT EXISTS (SELECT 1 FROM topic_items ti WHERE ti.media_id = m.id)`)
+	if err != nil {
+		logWarn("tópicos automáticos: %v", err)
+		return
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		var p string
+		if rows.Scan(&id, &p) == nil {
+			if _, ok := deriveTopic(p); ok {
+				ids = append(ids, id)
+			}
+		}
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return
+	}
+	if err := l.postProcess(ctx, ids); err != nil {
+		logWarn("tópicos automáticos: %v", err)
+		return
+	}
+	logInfo("📚 %d arquivos entraram em tópicos automáticos", len(ids))
 }
 
 // postProcess aplica política de pasta, tópico automático e índice de busca.

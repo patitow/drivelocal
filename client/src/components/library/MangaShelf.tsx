@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, CloudOff, Columns2, Download, Loader2, Rows3, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { buildStreamUrlSync, buildThumbnailUrlSync, cn } from '@/lib/utils'
 import { library, type LibraryItem, type MangaChapter, type MangaWork } from '@/lib/library'
-import { MetaBlurb, useExtMeta } from './ExtMeta'
+import { MetaBlurb, WebImg, useArt, useExtMeta } from './ExtMeta'
+import { EditEntryButton } from './EditEntryButton'
 import { Status, useLoad } from './catalogShared'
 import { useNavParam } from '@/lib/nav'
 import {
@@ -43,8 +44,11 @@ const natural = (a: string, b: string) => a.localeCompare(b, 'pt-BR', { numeric:
 
 // ---------- peças de papel ----------
 
-function Cover({ path, alt, className }: { path: string; alt: string; className?: string }) {
+// web: capa da ficha do cadastro, que vence a primeira página.
+function Cover({ path, web, alt, className }: { path: string; web?: string; alt: string; className?: string }) {
   const [failed, setFailed] = useState(false)
+  const [webFailed, setWebFailed] = useState(false)
+  if (web && !webFailed) return <WebImg src={web} alt={alt} onFail={() => setWebFailed(true)} className={cn('object-cover', className)} />
   if (failed) {
     return (
       <span className={cn('flex items-center justify-center', className)}
@@ -67,6 +71,7 @@ function PaperChip({ on, children, onClick }: { on: boolean; children: React.Rea
 function WorkCard({ w, state, onOpen }: { w: MangaWork; state?: ReadState; onOpen: () => void }) {
   const caps = w.chapters.length
   const read = state?.done.length ?? 0
+  const art = useArt(`manga:${w.dir}`)
   return (
     <button type="button" onClick={onOpen} aria-label={`Abrir ${w.title}`} data-testid="manga-card"
       className="group flex min-w-0 flex-col gap-2.5 text-left outline-none">
@@ -75,7 +80,7 @@ function WorkCard({ w, state, onOpen }: { w: MangaWork; state?: ReadState; onOpe
           style={{ background: RULE, borderColor: INK }} />
         <span className="absolute inset-0 overflow-hidden rounded border-2 group-focus-visible:ring-4 group-focus-visible:ring-[#181715]/30"
           style={{ background: SHEET, borderColor: INK }}>
-          <Cover path={w.cover} alt="" className="h-full w-full" />
+          <Cover path={w.cover} web={art?.cover} alt="" className="h-full w-full" />
           <span className="absolute bottom-2 right-2 px-2 py-0.5 text-xs font-semibold" style={{ background: INK, color: PAPER }}>
             {caps} {isVolumes(w) ? (caps === 1 ? 'vol.' : 'vols.') : caps === 1 ? 'cap.' : 'caps.'}
           </span>
@@ -130,6 +135,7 @@ function WorkPage({ w, state, downloaded, onBack, onRead }: {
   onRead: (chapter: number, page: number) => void
 }) {
   const meta = useExtMeta('manga', w.title, `manga:${w.dir}`)
+  const art = useArt(`manga:${w.dir}`)
   const curIdx = state ? Math.max(0, w.chapters.findIndex((c) => c.dir === state.chapter)) : 0
   const done = new Set(state?.done ?? [])
   const top = useRef<HTMLDivElement>(null)
@@ -143,7 +149,7 @@ function WorkPage({ w, state, downloaded, onBack, onRead }: {
         <span className="relative block aspect-[2/3] w-40 shrink-0 sm:w-52">
           <span className="absolute inset-0 translate-x-2.5 -translate-y-2 rounded border" style={{ background: RULE, borderColor: INK }} />
           <span className="absolute inset-0 overflow-hidden rounded border-2" style={{ borderColor: INK, background: SHEET }}>
-            <Cover path={w.cover} alt={`Capa de ${w.title}`} className="h-full w-full" />
+            <Cover path={w.cover} web={art?.cover} alt={`Capa de ${w.title}`} className="h-full w-full" />
           </span>
         </span>
         <div className="min-w-0 flex-1 space-y-3">
@@ -163,6 +169,7 @@ function WorkPage({ w, state, downloaded, onBack, onRead }: {
                 Recomeçar
               </button>
             )}
+            <EditEntryButton entryRef={`manga:${w.dir}`} className="border-2 hover:bg-transparent" style={{ borderColor: INK }} />
           </div>
         </div>
       </header>

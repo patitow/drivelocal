@@ -1,10 +1,11 @@
 // Gerenciar (admin): cadastro das entradas de cada estante — criar, editar
 // título, apelidos, maturidade, itens e a ficha (sinopse, ano, capa...),
 // que pode ser preenchida com dados de bancos públicos (AniList, MAL, IMDb...).
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import { ArrowLeft, Check, Download, Loader2, Plus, Search, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowUp, Check, Download, Loader2, Merge, Plus, Search, Split, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -12,13 +13,19 @@ import {
   library, type Entry, type EntryCat, type EntryData, type EntryInput, type ExtMeta, type LibraryItem, type Maturity, type MetaKind, type MetaSource,
 } from '@/lib/library'
 import { LIB, Status, errorMessage, useLoad } from './catalogShared'
-import { SOURCE } from './ExtMeta'
+import { SOURCE, WebImg } from './ExtMeta'
+import { ArtPicker } from './ArtPicker'
+import { ManageReview } from './ManageReview'
+import { useNavParam } from '@/lib/nav'
+
+const LibraryManagement = lazy(() => import('@/components/LibraryManagement').then((m) => ({ default: m.LibraryManagement })))
 import { Still } from './shelves/shelfUi'
 
 const CATS: Array<{ id: EntryCat; label: string; one: string; kind: MetaKind; sources: MetaSource[] }> = [
   { id: 'animes', label: 'Animes', one: 'anime', kind: 'anime', sources: ['anilist', 'mal', 'kitsu', 'wikipedia'] },
   { id: 'series', label: 'Séries', one: 'série', kind: 'series', sources: ['tvmaze', 'imdb', 'tmdb', 'wikipedia'] },
   { id: 'films', label: 'Filmes', one: 'filme', kind: 'movie', sources: ['imdb', 'tmdb', 'anilist', 'wikipedia'] },
+  { id: 'franchises', label: 'Franquias', one: 'franquia', kind: 'movie', sources: ['tmdb', 'imdb', 'wikipedia'] },
   { id: 'mangas', label: 'Mangás', one: 'mangá', kind: 'manga', sources: ['anilist', 'mal', 'kitsu', 'wikipedia'] },
   { id: 'creators', label: 'Criadores', one: 'criador', kind: 'person', sources: ['wikipedia'] },
 ]
@@ -29,6 +36,7 @@ const MATURITY: Array<{ id: Maturity; label: string }> = [
 ]
 const MAT_COLOR: Record<Maturity, string> = { geral: 'bg-emerald-500/15 text-emerald-300', sugestivo: 'bg-amber-500/15 text-amber-300', explicito: 'bg-red-500/15 text-red-300' }
 
+const UNDO_MS = 10_000
 const field = 'flex flex-col gap-1.5 text-sm'
 const area = 'min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 const list = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean)
@@ -42,25 +50,76 @@ function useDebounced<T>(v: T, ms = 300): T {
   return d
 }
 
-export function ManageTab() {
-  const [cat, setCat] = useState<EntryCat>('animes')
-  const [q, setQ] = useState('')
-  const dq = useDebounced(q)
-  // undefined: lista; null: nova entrada; Entry: editando
-  const [editing, setEditing] = useState<Entry | null | undefined>(undefined)
-  const res = useLoad(['admin', 'entries', cat, dq], () => library.admin.entries(cat, dq))
-  const c = catOf(cat)
+const SECTIONS = [
+  { id: 'cadastro', label: 'Cadastro', hint: 'Animes, séries, filmes, franquias, mangás e criadores: título, itens, ficha, capa e banner. Vale para todo mundo.' },
+  { id: 'revisao', label: 'Revisão', hint: 'Estado do catálogo, tópicos duplicados e sugestões da IA e dos usuários.' },
+  { id: 'bibliotecas', label: 'Bibliotecas', hint: 'Pastas da coleção, montagens e regras de maturidade por pasta.' },
+] as const
 
-  if (editing !== undefined) {
-    return <EntryEditor key={editing?.ref ?? 'new'} cat={cat} entry={editing} onDone={() => { setEditing(undefined); res.reload() }} />
-  }
-  const entries = res.data ?? []
+// Tudo de administração da Coleção num lugar só, em seções (?secao=).
+export function ManageTab() {
+  const [secao, setSecao] = useNavParam('secao')
+  const [editar] = useNavParam('editar')
+  const cur = SECTIONS.find((x) => x.id === secao) ?? SECTIONS[0]
+  if (editar && cur.id === 'cadastro') return <ManageEntries />
   return (
     <div className="space-y-5">
       <div>
         <h2 className="font-display text-3xl font-extrabold tracking-tight">Gerenciar</h2>
-        <p className="text-sm text-muted-foreground">Cadastre e edite animes, séries, filmes, mangás e criadores. A ficha preenchida aqui vale para todo mundo.</p>
+        <p className="text-sm text-muted-foreground">{cur.hint}</p>
       </div>
+      <div role="tablist" aria-label="Seções do Gerenciar" className="flex gap-6 border-b">
+        {SECTIONS.map((x) => (
+          <button key={x.id} type="button" role="tab" aria-selected={cur.id === x.id} onClick={() => setSecao(x.id === 'cadastro' ? null : x.id)}
+            className={cn('h-11 border-b-[3px] text-[15px]', cur.id === x.id ? 'border-foreground font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground')}>
+            {x.label}
+          </button>
+        ))}
+      </div>
+      {cur.id === 'cadastro' && <ManageEntries />}
+      {cur.id === 'revisao' && <ManageReview />}
+      {cur.id === 'bibliotecas' && <Suspense fallback={<Loader2 className="h-5 w-5 animate-spin" />}><LibraryManagement /></Suspense>}
+    </div>
+  )
+}
+
+// Cadastro: lista por estante; a entrada em edição fica no endereço (?editar=),
+// então os botões "Editar" das páginas abrem direto nela e o voltar funciona.
+function ManageEntries() {
+  const [cat, setCat] = useState<EntryCat>('animes')
+  const [q, setQ] = useState('')
+  const dq = useDebounced(q)
+  const [editar, setEditar] = useNavParam('editar')
+  const [volta] = useNavParam('volta')
+  const router = useRouter()
+  const res = useLoad(['admin', 'entries', cat, dq], () => library.admin.entries(cat, dq))
+  const isNew = !!editar?.startsWith('novo:')
+  const target = useLoad(['admin', 'entry', editar ?? ''], () => (editar && !isNew ? library.admin.entry(editar) : Promise.resolve(null)))
+  const c = catOf(cat)
+
+  if (editar) {
+    const done = () => {
+      res.reload()
+      if (volta) router.history.back()
+      else setEditar(null)
+    }
+    if (isNew) {
+      const nc = CATS.find((x) => x.id === editar.slice(5))?.id ?? cat
+      return <EntryEditor key={editar} cat={nc} entry={null} onDone={done} />
+    }
+    if (!target.data) {
+      return (
+        <div className="space-y-3">
+          <Button variant="ghost" onClick={done}><ArrowLeft className="mr-1 h-4 w-4" />Gerenciar</Button>
+          <Status loading={target.loading} error={target.error} />
+        </div>
+      )
+    }
+    return <EntryEditor key={editar} cat={target.data.cat} entry={target.data} onDone={done} />
+  }
+  const entries = res.data ?? []
+  return (
+    <div className="space-y-5">
       <div role="tablist" aria-label="Categoria" className="flex flex-wrap gap-2">
         {CATS.map((t) => (
           <button key={t.id} role="tab" aria-selected={cat === t.id} onClick={() => { setCat(t.id); setQ('') }}
@@ -74,17 +133,17 @@ export function ManageTab() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Buscar em ${c.label.toLowerCase()}`} aria-label="Buscar entradas" className="pl-9" />
         </div>
-        <Button onClick={() => setEditing(null)}><Plus className="mr-1 h-4 w-4" />Novo {c.one}</Button>
+        <Button onClick={() => setEditar(`novo:${cat}`)}><Plus className="mr-1 h-4 w-4" />Novo {c.one}</Button>
       </div>
       <Status loading={res.loading} error={res.error} />
       {!res.loading && entries.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma entrada{dq ? ' com esse nome' : ''}.</p>}
       <ul aria-label="Entradas" className="divide-y overflow-hidden rounded-xl border">
         {entries.map((e) => (
           <li key={e.ref}>
-            <button type="button" onClick={() => setEditing(e)} aria-label={`Editar ${e.title}`}
+            <button type="button" onClick={() => setEditar(e.ref)} aria-label={`Editar ${e.title}`}
               className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-secondary/60">
               <span className="h-12 w-20 shrink-0 overflow-hidden rounded-md bg-muted">
-                {e.meta?.cover ? <img src={e.meta.cover} alt="" className="h-full w-full object-cover" loading="lazy" />
+                {e.meta?.banner || e.meta?.cover ? <WebImg src={e.meta.banner || e.meta.cover} className="h-full w-full object-cover" />
                   : e.coverPath ? <Still path={e.coverPath} className="h-full w-full object-cover" /> : null}
               </span>
               <span className="flex min-w-0 flex-1 flex-col">
@@ -155,11 +214,22 @@ function EntryEditor({ cat, entry, onDone }: { cat: EntryCat; entry: Entry | nul
   const [dir, setDir] = useState(entry?.dir ?? '')
   const [busy, setBusy] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
-  const isTopic = !!entry?.topicId || (!entry && (cat === 'animes' || cat === 'series' || cat === 'creators'))
+  const isTopic = !!entry?.topicId || (!entry && (cat === 'animes' || cat === 'series' || cat === 'creators' || cat === 'franchises'))
+  const ordered = cat === 'franchises'
+  const [order, setOrder] = useState<number[] | null>(null)
+  const own = useLoad(['admin', 'entry-art-items', entry?.ref ?? '', dir], () => {
+    if (entry?.topicId) return library.items({ topicId: entry.topicId, limit: 400, sort: 'episode' }).then((p) => p.items)
+    if (entry?.mediaId) return library.item(entry.mediaId).then((it) => [it])
+    const d = entry?.dir || dir
+    if (d) return library.items({ pathPrefix: d, kind: 'image', limit: 60 }).then((p) => p.items)
+    return Promise.resolve([] as LibraryItem[])
+  })
+  const artItems = [...adds, ...(own.data ?? []).filter((it) => !rems.has(it.id))]
 
   const refresh = async () => {
     await qc.invalidateQueries({ queryKey: [LIB] })
     await qc.invalidateQueries({ queryKey: ['ext-meta'] })
+    await qc.invalidateQueries({ queryKey: ['entry-art'] })
   }
 
   const save = async () => {
@@ -174,6 +244,7 @@ function EntryEditor({ cat, entry, onDone }: { cat: EntryCat; entry: Entry | nul
       ...(hasMeta(meta) ? { meta } : entry?.meta && hasMeta(entry.meta) ? { clearMeta: true } : {}),
       ...(adds.length ? { addIds: adds.map((it) => it.id) } : {}),
       ...(rems.size ? { removeIds: [...rems] } : {}),
+      ...(ordered && order ? { order: order.filter((id) => !rems.has(id)) } : {}),
     }
     setBusy(true)
     try {
@@ -258,9 +329,11 @@ function EntryEditor({ cat, entry, onDone }: { cat: EntryCat; entry: Entry | nul
           {cat === 'mangas' && !entry && <FolderPicker dir={dir} onPick={(d) => { setDir(d); if (!f.title) set('title', d.split('/').pop() ?? d) }} />}
           {cat === 'mangas' && entry?.dir && <p className="text-sm text-muted-foreground">Pasta: <span className="text-foreground">{entry.dir}</span></p>}
           {(isTopic || (cat === 'films' && !entry)) && (
-            <ItemsEditor entry={entry} single={cat === 'films'} adds={adds} setAdds={setAdds} rems={rems} setRems={setRems}
+            <ItemsEditor entry={entry} single={cat === 'films'} videosOnly={ordered} order={ordered ? order : undefined} setOrder={setOrder}
+              adds={adds} setAdds={setAdds} rems={rems} setRems={setRems}
               onFirst={(it) => { if (!f.title) set('title', it.title || it.name.replace(/\.[^.]+$/, '')) }} />
           )}
+          {entry?.topicId && <TopicTools entry={entry} onChanged={refresh} onGone={onDone} />}
           {entry?.mediaId && <p className="text-sm text-muted-foreground">Arquivo: <span className="text-foreground">{entry.coverPath || `#${entry.mediaId}`}</span></p>}
         </section>
 
@@ -279,15 +352,11 @@ function EntryEditor({ cat, entry, onDone }: { cat: EntryCat; entry: Entry | nul
             <label className={field}>{cat === 'mangas' ? 'Capítulos' : 'Episódios'}<Input inputMode="numeric" value={f.episodes} onChange={(e) => set('episodes', e.target.value)} /></label>
           </div>
           <label className={field}>Gêneros (separados por vírgula)<Input value={f.genres} onChange={(e) => set('genres', e.target.value)} /></label>
-          <label className={field}>Capa (URL)<Input value={f.cover} onChange={(e) => set('cover', e.target.value)} /></label>
-          <label className={field}>Banner (URL)<Input value={f.banner} onChange={(e) => set('banner', e.target.value)} /></label>
-          <label className={field}>Link<Input value={f.url} onChange={(e) => set('url', e.target.value)} /></label>
-          {(f.cover || f.banner) && (
-            <div className="flex gap-3">
-              {f.cover && <img src={f.cover} alt="Capa" className="h-40 rounded-lg object-cover" />}
-              {f.banner && <img src={f.banner} alt="Banner" className="h-40 min-w-0 flex-1 rounded-lg object-cover" />}
-            </div>
-          )}
+          <label className={field}>Link da ficha<Input value={f.url} onChange={(e) => set('url', e.target.value)} /></label>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+            <ArtPicker label={cat === 'creators' ? 'Foto' : 'Capa'} round={cat === 'creators'} value={f.cover} onChange={(v) => set('cover', v)} items={artItems} />
+            <ArtPicker label="Banner" wide value={f.banner} onChange={(v) => set('banner', v)} items={artItems} />
+          </div>
         </section>
       </div>
     </div>
@@ -338,7 +407,7 @@ function MetaSearch({ cat, title, onPick }: { cat: EntryCat; title: string; onPi
               <button type="button" onClick={() => { onPick(m); setRes(null) }} aria-label={`Usar ${m.title}`}
                 className="flex w-full gap-3 rounded-lg p-2 text-left hover:bg-secondary/60">
                 <span className="h-16 w-11 shrink-0 overflow-hidden rounded bg-muted">
-                  {m.cover && <img src={m.cover} alt="" className="h-full w-full object-cover" loading="lazy" />}
+                  {m.cover && <WebImg src={m.cover} className="h-full w-full object-cover" />}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{m.title}{m.year ? ` (${m.year})` : ''}</span>
@@ -354,8 +423,10 @@ function MetaSearch({ cat, title, onPick }: { cat: EntryCat; title: string; onPi
 }
 
 // Itens de um agrupamento (episódios, vídeos do criador) ou o vídeo de um filme novo.
-function ItemsEditor({ entry, single, adds, setAdds, rems, setRems, onFirst }: {
-  entry: Entry | null; single: boolean
+function ItemsEditor({ entry, single, videosOnly, order, setOrder, adds, setAdds, rems, setRems, onFirst }: {
+  entry: Entry | null; single: boolean; videosOnly?: boolean
+  // franquia: a ordem dos itens (null = a atual); sem setOrder, sem setas
+  order?: number[] | null; setOrder?: (v: number[]) => void
   adds: LibraryItem[]; setAdds: (v: LibraryItem[]) => void
   rems: Set<number>; setRems: (v: Set<number>) => void
   onFirst: (it: LibraryItem) => void
@@ -365,8 +436,9 @@ function ItemsEditor({ entry, single, adds, setAdds, rems, setRems, onFirst }: {
     : Promise.resolve([] as LibraryItem[])))
   const [q, setQ] = useState('')
   const dq = useDebounced(q)
-  const found = useLoad(['admin', 'entry-find', dq], () => (dq.trim().length > 1
-    ? library.items({ q: dq, kind: 'video', limit: 20, sort: 'relevance' }).then((p) => p.items)
+  const onlyVideo = single || !!videosOnly
+  const found = useLoad(['admin', 'entry-find', dq, onlyVideo], () => (dq.trim().length > 1
+    ? library.items({ q: dq, ...(onlyVideo ? { kind: 'video' as const } : {}), limit: 30, sort: 'relevance' }).then((p) => p.items)
     : Promise.resolve([] as LibraryItem[])))
   const have = new Set([...(current.data ?? []).map((it) => it.id), ...adds.map((it) => it.id)])
   const add = (it: LibraryItem) => {
@@ -379,19 +451,39 @@ function ItemsEditor({ entry, single, adds, setAdds, rems, setRems, onFirst }: {
     else n.add(id)
     setRems(n)
   }
-  const rows = [...(current.data ?? []), ...adds]
+  const base = [...(current.data ?? []), ...adds]
+  const byId = new Map(base.map((it) => [it.id, it]))
+  const sortable = order !== undefined && !!setOrder
+  // a ordem escolhida primeiro; o que entrou depois vai para o fim
+  const rows = sortable && order
+    ? [...order.map((id) => byId.get(id)).filter((it): it is LibraryItem => !!it), ...base.filter((it) => !order.includes(it.id))]
+    : base
+  const move = (i: number, d: number) => {
+    const ids = rows.map((it) => it.id)
+    const j = i + d
+    if (j < 0 || j >= ids.length) return
+    ;[ids[i], ids[j]] = [ids[j], ids[i]]
+    setOrder?.(ids)
+  }
   return (
     <div className="space-y-3">
       <h3 className="font-semibold">{single ? 'Vídeo do filme' : `Itens (${rows.length - rems.size})`}</h3>
       <Status loading={current.loading} error={current.error} />
       {rows.length > 0 && (
         <ul aria-label="Itens da entrada" className="max-h-[300px] divide-y overflow-auto rounded-lg border">
-          {rows.map((it) => {
+          {rows.map((it, i) => {
             const isNew = adds.some((a) => a.id === it.id)
             const off = rems.has(it.id)
             return (
               <li key={it.id} className={cn('flex items-center gap-2 px-3 py-1.5 text-sm', off && 'opacity-40 line-through')}>
-                <span className="min-w-0 flex-1 truncate" title={it.path}>{it.episode != null ? `Ep. ${it.episode} · ` : ''}{it.name}</span>
+                {sortable && <span className="w-6 shrink-0 text-right tabular-nums text-muted-foreground">{i + 1}</span>}
+                <span className="min-w-0 flex-1 truncate" title={it.path}>{!sortable && it.episode != null ? `Ep. ${it.episode} · ` : ''}{it.name}</span>
+                {sortable && (
+                  <>
+                    <button type="button" aria-label={`Subir ${it.title || it.name}`} disabled={i === 0} onClick={() => move(i, -1)} className="rounded p-1 hover:bg-secondary disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button>
+                    <button type="button" aria-label={`Descer ${it.title || it.name}`} disabled={i === rows.length - 1} onClick={() => move(i, 1)} className="rounded p-1 hover:bg-secondary disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button>
+                  </>
+                )}
                 {isNew && <span className="text-xs text-emerald-400">novo</span>}
                 <button type="button" aria-label={`${off ? 'Manter' : 'Tirar'} ${it.title || it.name}`} className="rounded p-1 hover:bg-secondary"
                   onClick={() => (isNew ? setAdds(adds.filter((a) => a.id !== it.id)) : toggleRem(it.id))}>
@@ -404,10 +496,10 @@ function ItemsEditor({ entry, single, adds, setAdds, rems, setRems, onFirst }: {
       )}
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Procurar vídeo para adicionar" aria-label="Procurar vídeo" className="pl-9" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={onlyVideo ? 'Procurar vídeo para adicionar' : 'Procurar vídeo ou imagem para adicionar'} aria-label="Procurar item" className="pl-9" />
       </div>
       {(found.data ?? []).length > 0 && (
-        <ul aria-label="Vídeos encontrados" className="max-h-[240px] divide-y overflow-auto rounded-lg border">
+        <ul aria-label="Itens encontrados" className="max-h-[240px] divide-y overflow-auto rounded-lg border">
           {(found.data ?? []).filter((it) => !have.has(it.id)).map((it) => (
             <li key={it.id}>
               <button type="button" onClick={() => add(it)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-secondary/60">
@@ -444,6 +536,68 @@ function FolderPicker({ dir, onPick }: { dir: string; onPick: (d: string) => voi
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+// Agrupamentos (animes, séries, criadores): juntar com outra entrada da mesma
+// estante ou desfazer o agrupamento — os mesmos poderes do perfil do criador,
+// com o mesmo "Desfazer" por 10s.
+function TopicTools({ entry, onChanged, onGone }: { entry: Entry; onChanged: () => Promise<void>; onGone: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const dq = useDebounced(q)
+  const [busy, setBusy] = useState(false)
+  const res = useLoad(['admin', 'entries', entry.cat, dq], () => library.admin.entries(entry.cat, dq))
+  const others = (res.data ?? []).filter((e) => e.topicId && e.ref !== entry.ref).slice(0, 30)
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true)
+    try { await fn() } catch (e) { toast.error(errorMessage(e)) } finally { setBusy(false) }
+  }
+  const merge = (o: Entry) => run(async () => {
+    const r = await library.admin.acceptTopicDupes(entry.topicId!, [o.topicId!])
+    await onChanged()
+    setOpen(false)
+    toast.success(`"${o.title}" juntado em "${entry.title}"`, {
+      duration: UNDO_MS, action: { label: 'Desfazer', onClick: () => { library.admin.undoTopicMerge(r.batchId).then(onChanged, (e) => toast.error(errorMessage(e))) } },
+    })
+  })
+  const dissolve = () => run(async () => {
+    const b = await library.admin.dissolveTopic(entry.topicId!)
+    await onChanged()
+    toast.success(`Agrupamento "${b.title}" desfeito`, {
+      duration: UNDO_MS, action: { label: 'Desfazer', onClick: () => { library.admin.restoreTopic(b.kind, b.slug).then(onChanged, (e) => toast.error(errorMessage(e))) } },
+    })
+    onGone()
+  })
+  return (
+    <div className="space-y-2 rounded-xl border p-3">
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" size="sm" variant={open ? 'secondary' : 'outline'} disabled={busy} onClick={() => setOpen(!open)}>
+          <Merge className="mr-1 h-4 w-4" />Juntar com…
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void dissolve()}
+          title="Os itens saem do agrupamento; os arquivos continuam na biblioteca">
+          <Split className="mr-1 h-4 w-4" />Desfazer agrupamento
+        </Button>
+      </div>
+      {open && (
+        <>
+          <p className="text-xs text-muted-foreground">Os itens da escolhida passam para esta; o nome dela vira apelido.</p>
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Procurar entrada" aria-label="Procurar entrada para juntar" />
+          <ul aria-label="Entradas para juntar" className="max-h-[220px] divide-y overflow-auto rounded-lg border">
+            {others.map((o) => (
+              <li key={o.ref}>
+                <button type="button" disabled={busy} onClick={() => void merge(o)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-secondary/60">
+                  <Merge className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{o.title}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{o.count} itens</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   )
 }

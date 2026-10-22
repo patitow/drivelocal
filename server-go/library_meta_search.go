@@ -14,11 +14,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
 	kitsuURL     = "https://kitsu.app/api/edge"
 	jikanURL     = "https://api.jikan.moe/v4"
+	malAPIURL    = "https://api.myanimelist.net/v2"
 	imdbSuggURL  = "https://v3.sg.media-imdb.com/suggestion/x"
 	tvmazeURL    = "https://api.tvmaze.com"
 	wikipediaURL = "https://pt.wikipedia.org"
@@ -60,7 +62,7 @@ func SearchMeta(ctx context.Context, source, kind, q string) ([]ExtMeta, error) 
 	case "anilist":
 		return searchAniList(ctx, kind, q)
 	case "mal":
-		return searchJikan(ctx, kind, q)
+		return searchMAL(ctx, kind, q)
 	case "kitsu":
 		return searchKitsu(ctx, kind, q)
 	case "imdb":
@@ -76,8 +78,105 @@ func SearchMeta(ctx context.Context, source, kind, q string) ([]ExtMeta, error) 
 }
 
 func searchAniList(ctx context.Context, kind, q string) ([]ExtMeta, error) {
+	return aniListSearch(ctx, kind, q, false)
+}
+
+// jikanTimeout: o Jikan às vezes nem atende; melhor desistir cedo e ir pelo AniList.
+var jikanTimeout = 6 * time.Second
+
+// searchMAL busca no MyAnimeList: pela API oficial com MAL_CLIENT_ID (a única que
+// acha tudo, inclusive o que o site esconde sem login), senão pelo Jikan; se ele
+// não responder, o AniList devolve as mesmas obras com o id do MAL.
+func searchMAL(ctx context.Context, kind, q string) ([]ExtMeta, error) {
+	if id := strings.TrimSpace(os.Getenv("MAL_CLIENT_ID")); id != "" {
+		res, err := searchMALAPI(ctx, id, kind, q)
+		if err == nil {
+			return res, nil
+		}
+		logWarn("myanimelist (API oficial): %v", err)
+	}
+	jctx, cancel := context.WithTimeout(ctx, jikanTimeout)
+	res, err := searchJikan(jctx, kind, q)
+	cancel()
+	if err == nil {
+		return res, nil
+	}
+	alt, aerr := aniListSearch(ctx, kind, q, true)
+	if aerr != nil {
+		return nil, err
+	}
+	logWarn("myanimelist pelo AniList (%v)", err)
+	return alt, nil
+}
+
+func searchMALAPI(ctx context.Context, clientID, kind, q string) ([]ExtMeta, error) {
+	t := "anime"
+	if kind == "manga" {
+		t = "manga"
+	}
+	if r := []rune(q); len(r) > 64 { // limite da API
+		q = string(r[:64])
+	}
+	var out struct {
+		Data []struct {
+			Node struct {
+				ID          int    `json:"id"`
+				Title       string `json:"title"`
+				Synopsis    string `json:"synopsis"`
+				StartDate   string `json:"start_date"`
+				Mean        float64
+				NumEpisodes int `json:"num_episodes"`
+				NumChapters int `json:"num_chapters"`
+				Genres      []struct{ Name string }
+				MainPicture struct{ Medium, Large string } `json:"main_picture"`
+				AltTitles   struct{ En string }            `json:"alternative_titles"`
+			} `json:"node"`
+		} `json:"data"`
+	}
+	u := fmt.Sprintf("%s/%s?limit=%d&q=%s&fields=alternative_titles,synopsis,start_date,mean,num_episodes,num_chapters,genres,main_picture",
+		malAPIURL, t, metaSearchMax, url.QueryEscape(q))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req.Header.Set("X-MAL-CLIENT-ID", clientID)
+	resp, err := metaHTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	res := []ExtMeta{}
+	for _, d := range out.Data {
+		n := d.Node
+		e := ExtMeta{Source: "mal", URL: fmt.Sprintf("https://myanimelist.net/%s/%d", t, n.ID), Title: n.Title,
+			Synopsis: plainSynopsis(n.Synopsis), Cover: n.MainPicture.Large, Score: int(n.Mean*10 + 0.5), Episodes: n.NumEpisodes, Genres: []string{}}
+		if n.AltTitles.En != "" {
+			e.Title = n.AltTitles.En
+		}
+		if e.Cover == "" {
+			e.Cover = n.MainPicture.Medium
+		}
+		if t == "manga" {
+			e.Episodes = n.NumChapters
+		}
+		if len(n.StartDate) >= 4 {
+			e.Year, _ = strconv.Atoi(n.StartDate[:4])
+		}
+		for _, g := range n.Genres {
+			e.Genres = append(e.Genres, g.Name)
+		}
+		res = append(res, e)
+	}
+	return res, nil
+}
+
+// aniListSearch: asMAL devolve só as obras que existem no MAL, com fonte e link de lá.
+func aniListSearch(ctx context.Context, kind, q string, asMAL bool) ([]ExtMeta, error) {
 	const gql = `query ($s: String, $t: MediaType) { Page(perPage: 8) { media(search: $s, type: $t) {
-		siteUrl format episodes chapters averageScore genres bannerImage description(asHtml: false)
+		idMal siteUrl format episodes chapters averageScore genres bannerImage description(asHtml: false)
 		title { romaji english } startDate { year } coverImage { extraLarge large } } } }`
 	t := "ANIME"
 	if kind == "manga" {
@@ -99,6 +198,7 @@ func searchAniList(ctx context.Context, kind, q string) ([]ExtMeta, error) {
 		Data struct {
 			Page struct {
 				Media []struct {
+					IDMal        int      `json:"idMal"`
 					SiteURL      string   `json:"siteUrl"`
 					Format       string   `json:"format"`
 					Episodes     int      `json:"episodes"`
@@ -131,9 +231,16 @@ func searchAniList(ctx context.Context, kind, q string) ([]ExtMeta, error) {
 		if kind == "manga" {
 			eps = m.Chapters
 		}
-		res = append(res, ExtMeta{Source: "anilist", URL: m.SiteURL, Title: title, Year: m.StartDate.Year,
+		e := ExtMeta{Source: "anilist", URL: m.SiteURL, Title: title, Year: m.StartDate.Year,
 			Synopsis: plainSynopsis(m.Description), Cover: cover, Banner: m.BannerImage, Genres: nonNil(m.Genres),
-			Score: m.AverageScore, Episodes: eps})
+			Score: m.AverageScore, Episodes: eps}
+		if asMAL {
+			if m.IDMal == 0 {
+				continue
+			}
+			e.Source, e.URL = "mal", fmt.Sprintf("https://myanimelist.net/%s/%d", strings.ToLower(t), m.IDMal)
+		}
+		res = append(res, e)
 	}
 	return res, nil
 }

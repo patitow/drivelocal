@@ -1,9 +1,9 @@
 // Itens da Coleção na barra lateral única do app (início, estantes e seções).
-import { Search, ListVideo, Tags, Home, ShieldCheck, SlidersHorizontal, Heart } from 'lucide-react'
+import { Search, ListVideo, Tags, Home, SlidersHorizontal, Heart } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SHELVES, useCreatorNews, useShelfCounts, type ShelfId } from './shelves/shelfUi'
 
-export type CatalogTab = 'home' | 'search' | 'topics' | 'playlists' | 'review' | 'manage' | 'favorites' | ShelfId
+export type CatalogTab = 'home' | 'search' | 'topics' | 'playlists' | 'manage' | 'favorites' | ShelfId
 
 export const isShelfTab = (t: CatalogTab): t is ShelfId => SHELVES.some((s) => s.id === t)
 
@@ -12,7 +12,6 @@ export const CATALOG_MORE: Array<{ id: CatalogTab; label: string; icon: typeof H
   { id: 'topics', label: 'Tópicos', icon: Tags },
   { id: 'playlists', label: 'Playlists', icon: ListVideo },
   { id: 'favorites', label: 'Favoritos', icon: Heart },
-  { id: 'review', label: 'Revisão', icon: ShieldCheck, admin: true },
   { id: 'manage', label: 'Gerenciar', icon: SlidersHorizontal, admin: true },
 ]
 

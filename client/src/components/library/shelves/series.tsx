@@ -1,5 +1,5 @@
 // Séries: card em pilha, linha "Próximo episódio" e página da série.
-import { MetaBlurb, useExtMeta } from '../ExtMeta'
+import { ArtFrame, MetaBlurb, WebImg, useArt, useExtMeta } from '../ExtMeta'
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronLeft, FileWarning, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -7,12 +7,14 @@ import { formatDuration, type LibraryItem, type SeriesGroup } from '@/lib/librar
 import { Thumbnail } from '@/components/Thumbnail'
 import { asFile, progressPct, type OpenFn } from '../catalogShared'
 import { Segmented, Still, totalTime, type Shelf } from './shelfUi'
+import { EditEntryButton } from '../EditEntryButton'
 
 export const epLabel = (it: LibraryItem) => (it.episode != null ? `${it.part ? `${it.part} · ` : ''}Ep. ${it.episode}` : it.title || it.name)
 
 // Série como pilha de capas (o "volume" da pilha mostra que há vários episódios).
 export function SeriesStackCard({ s, shelf, onClick }: { s: SeriesGroup; shelf: Shelf; onClick: () => void }) {
   const cover = s.coverPath || s.best.path
+  const art = useArt(s.topicId ? `topic:${s.topicId}` : undefined)
   const meta = [s.watched > 0 ? `${s.watched} de ${s.total} vistos` : 'Não visto', s.year ? String(s.year) : ''].filter(Boolean).join(' · ')
   return (
     <button type="button" onClick={onClick} aria-label={`Abrir ${s.title}`} data-testid="series-card"
@@ -21,7 +23,7 @@ export function SeriesStackCard({ s, shelf, onClick }: { s: SeriesGroup; shelf: 
         <div className="absolute inset-x-5 top-0 h-[calc(100%-8px)] rounded-xl" style={{ background: shelf.color, opacity: 0.18 }} />
         <div className="absolute inset-x-2.5 top-1 h-[calc(100%-8px)] rounded-xl" style={{ background: shelf.color, opacity: 0.32 }} />
         <div className="relative aspect-video overflow-hidden rounded-xl bg-muted transition-transform duration-200 group-hover:-translate-y-0.5">
-          <Thumbnail file={asFile({ ...s.best, path: cover })} className="h-full w-full object-cover" size="md" />
+          <ArtFrame art={art} fallback={<Thumbnail file={asFile({ ...s.best, path: cover })} className="h-full w-full object-cover" size="md" />} />
           <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2.5 py-0.5 text-xs font-semibold text-white">
             {s.total} {s.total === 1 ? 'episódio' : 'episódios'}
           </span>
@@ -114,20 +116,26 @@ export function SeriesDetail({ s, shelf, onOpen, onBack, backLabel }: { s: Serie
   const done = Math.max(s.watched, s.items.filter(seen).length)
   const pct = s.total > 0 ? Math.round((done / s.total) * 100) : 0
   const runtime = totalTime(s.items)
-  const meta = useExtMeta(shelf.id === 'animes' ? 'anime' : null, s.title, s.topicId ? `topic:${s.topicId}` : undefined)
+  const ref = s.topicId ? `topic:${s.topicId}` : undefined
+  const meta = useExtMeta(shelf.id === 'animes' ? 'anime' : null, s.title, ref)
+  const art = useArt(ref)
   return (
     <div ref={top} className="scroll-mt-9 space-y-8">
       <button type="button" onClick={onBack} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ChevronLeft className="h-4 w-4" />{backLabel ?? shelf.label}
       </button>
       <header className="relative isolate overflow-hidden px-4 pb-8 pt-2 sm:mx-0 sm:rounded-[28px] sm:px-8 sm:pt-8 lg:px-10">
-        <Still path={cover} className="absolute inset-0 -z-10 h-full w-full scale-110 object-cover opacity-35 blur-3xl" />
+        {art?.banner
+          ? <WebImg src={art.banner} className="absolute inset-0 -z-10 h-full w-full object-cover opacity-45" />
+          : <Still path={cover} className="absolute inset-0 -z-10 h-full w-full scale-110 object-cover opacity-35 blur-3xl" />}
         <div className="absolute inset-0 -z-10" style={{ background: `linear-gradient(180deg, transparent 0%, hsl(var(--background)) 92%)` }} />
         <div className="flex flex-col gap-7 lg:flex-row lg:items-end">
-          <span className="relative block aspect-video w-[calc(100%-12px)] max-w-[460px] shrink-0">
+          {/* pôster da ficha quando houver; senão o still do vídeo */}
+          <span className={cn('relative block shrink-0', art?.cover ? 'aspect-[2/3] w-44 sm:w-56' : 'aspect-video w-[calc(100%-12px)] max-w-[460px]')}>
             <span className="absolute inset-0 translate-x-2.5 -translate-y-2 rounded-2xl" style={{ background: shelf.color, opacity: 0.35 }} />
             <span className="absolute inset-0 overflow-hidden rounded-2xl bg-muted shadow-2xl">
-              <Thumbnail file={asFile({ ...s.best, path: cover })} className="h-full w-full object-cover" size="md" />
+              <ArtFrame art={art?.cover ? { cover: art.cover } : undefined}
+                fallback={<Thumbnail file={asFile({ ...s.best, path: cover })} className="h-full w-full object-cover" size="md" />} />
             </span>
           </span>
           <div className="min-w-0 flex-1 space-y-3">
@@ -154,6 +162,7 @@ export function SeriesDetail({ s, shelf, onOpen, onBack, backLabel }: { s: Serie
                   Do primeiro episódio
                 </button>
               )}
+              <EditEntryButton entryRef={ref} />
             </div>
           </div>
         </div>

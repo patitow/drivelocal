@@ -126,6 +126,8 @@ var defaultTopicRoots = []topicRoot{
 	{Prefix: "Torrents/.Animes/Anime", Kind: "series"},
 	{Prefix: "Torrents/.Animes", Kind: "series"},
 	{Prefix: "Torrents/.Mangás", Kind: "series"}, // D12 (decisão do agente)
+	{Prefix: "Series", Kind: "series"},
+	{Prefix: "Séries", Kind: "series"},
 	{Prefix: "Criadores", Kind: "creator"},
 	{Prefix: "Gravacoes/Privado", Kind: "creator", Leaf: true},
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { library, resumePoint, shouldSaveProgress, type Prefs } from '@/lib/library'
+import { library, resumePoint, shouldSaveProgress, type PathProgress, type Prefs, type TrackChoice } from '@/lib/library'
 
 export interface PlaybackProgressState {
   // true quando a consulta terminou (com ou sem dados); o player espera isso para começar
@@ -7,9 +7,11 @@ export interface PlaybackProgressState {
   // segundos de onde retomar (já respeitando a preferência de auto-retomar), ou null
   resumeAt: number | null
   prefs: Prefs | null
+  // última faixa de áudio/legenda usada nesta série (servidor), se houver
+  tracks: PathProgress['tracks'] | null
 }
 
-const DEFAULT_STATE: PlaybackProgressState = { ready: false, resumeAt: null, prefs: null }
+const DEFAULT_STATE: PlaybackProgressState = { ready: false, resumeAt: null, prefs: null, tracks: null }
 
 // Posição salva por usuário no servidor (biblioteca). Se a biblioteca estiver
 // desligada ou o arquivo fora do catálogo, o player segue como antes.
@@ -33,10 +35,10 @@ export function usePlaybackProgress(path: string) {
         availableRef.current = true
         lastSavedRef.current = r.progress?.positionS ?? null
         const autoResume = r.prefs?.autoResume !== false
-        setState({ ready: true, resumeAt: autoResume ? resumePoint(r.progress) : null, prefs: r.prefs ?? null })
+        setState({ ready: true, resumeAt: autoResume ? resumePoint(r.progress) : null, prefs: r.prefs ?? null, tracks: r.tracks ?? null })
       })
       .catch(() => {
-        if (!cancelled) setState({ ready: true, resumeAt: null, prefs: null })
+        if (!cancelled) setState({ ready: true, resumeAt: null, prefs: null, tracks: null })
       })
       .finally(() => clearTimeout(timer))
     return () => {
@@ -45,12 +47,12 @@ export function usePlaybackProgress(path: string) {
     }
   }, [path])
 
-  // Grava a posição; sem `force` só grava a cada ~10 s de diferença.
-  const report = useCallback((positionS: number, durationS: number, opts: { force?: boolean; completed?: boolean } = {}) => {
+  // Grava a posição (e as faixas escolhidas); sem `force` só grava a cada ~10 s de diferença.
+  const report = useCallback((positionS: number, durationS: number, opts: { force?: boolean; completed?: boolean; tracks?: TrackChoice } = {}) => {
     if (!availableRef.current || !Number.isFinite(positionS)) return
     if (!shouldSaveProgress(lastSavedRef.current, positionS, opts.force)) return
     lastSavedRef.current = positionS
-    void library.saveProgressByPath(path, positionS, Number.isFinite(durationS) ? durationS : 0, opts.completed).catch(() => {})
+    void library.saveProgressByPath(path, positionS, Number.isFinite(durationS) ? durationS : 0, opts.completed, opts.tracks).catch(() => {})
   }, [path])
 
   return { ...state, report }

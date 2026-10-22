@@ -56,6 +56,8 @@ const catalogTabRoute = createRoute({
   path: '/colecao/$tab',
   validateSearch: parseCatalogSearch,
   beforeLoad: ({ params }) => {
+    // a Revisão virou seção do Gerenciar
+    if (params.tab === 'review') throw redirect({ to: '/colecao/$tab', params: { tab: 'manage' }, search: { secao: 'revisao' } as never, replace: true })
     if (!isCatalogTab(params.tab) || params.tab === 'home') throw redirect({ to: '/colecao', replace: true })
   },
   component: CatalogTabPage,

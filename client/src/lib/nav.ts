@@ -14,6 +14,9 @@ export interface CatalogSearch {
   topico?: number
   playlist?: number
   q?: string // termo da busca
+  secao?: string // seção do Gerenciar
+  editar?: string // entrada em edição no Gerenciar (ref, ou novo:<estante>)
+  volta?: number // 1: a edição veio de uma página; ao terminar, volta para ela
 }
 
 const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : typeof v === 'number' ? String(v) : undefined)
@@ -26,6 +29,7 @@ export function parseCatalogSearch(s: Record<string, unknown>): CatalogSearch {
   const out: CatalogSearch = {
     serie: str(s.serie), criador: num(s.criador), obra: str(s.obra), cap: num(s.cap),
     topico: num(s.topico), playlist: num(s.playlist), q: str(s.q),
+    secao: str(s.secao), editar: str(s.editar), volta: num(s.volta),
   }
   for (const k of Object.keys(out) as Array<keyof CatalogSearch>) if (out[k] === undefined) delete out[k]
   return out

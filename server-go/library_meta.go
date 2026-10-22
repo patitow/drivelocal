@@ -35,6 +35,11 @@ type ExtMeta struct {
 	Episodes int      `json:"episodes,omitempty"`
 }
 
+func (m ExtMeta) public() ExtMeta {
+	m.Cover, m.Banner = artPublic(m.Cover), artPublic(m.Banner)
+	return m
+}
+
 const (
 	metaFoundTTL    = 30 * 24 * time.Hour
 	metaNotFoundTTL = 7 * 24 * time.Hour
@@ -262,6 +267,7 @@ func (l *Library) LookupMeta(ctx context.Context, kind, rawTitle string) (*ExtMe
 		if data.Valid && age < metaFoundTTL {
 			var m ExtMeta
 			if json.Unmarshal([]byte(data.String), &m) == nil {
+				m = m.public()
 				return &m, nil
 			}
 		} else if !data.Valid && age < metaNotFoundTTL {
@@ -291,12 +297,25 @@ func (l *Library) LookupMeta(ctx context.Context, kind, rawTitle string) (*ExtMe
 	}
 	var stored any
 	if m != nil {
+		// a capa e o banner ficam no acervo local (links de CDN expiram)
+		m.Cover, m.Banner = l.localArt(ctx, m.Cover), l.localArt(ctx, m.Banner)
 		b, _ := json.Marshal(m)
 		stored = string(b)
+		*m = m.public()
 	}
 	l.w.ExecContext(ctx, `INSERT INTO ext_meta(key, data, fetched_at) VALUES (?,?,?)
 		ON CONFLICT(key) DO UPDATE SET data=excluded.data, fetched_at=excluded.fetched_at`, key, stored, nowUnix())
 	return m, nil
+}
+
+// GET /api/meta/art → {art: {ref: {cover, banner}}}: a arte das fichas, para os cards.
+func libArtHandler(l *Library, w http.ResponseWriter, r *http.Request) {
+	art, err := l.EntryArts(r.Context(), l.viewer(r))
+	if err != nil {
+		libFail(w, err)
+		return
+	}
+	libJSON(w, map[string]any{"art": art})
 }
 
 // GET /api/meta?kind=anime|manga|movie&q=Título → {meta: ExtMeta|null}
@@ -304,8 +323,8 @@ func libMetaHandler(l *Library, w http.ResponseWriter, r *http.Request) {
 	kind := r.URL.Query().Get("kind")
 	// ficha curada no cadastro vence a busca automática
 	if ref := r.URL.Query().Get("ref"); ref != "" && validEntryRef(ref) && l.entryVisible(r.Context(), l.viewer(r), ref) {
-		if d, err := l.GetEntryMeta(r.Context(), ref); err == nil && d != nil && (d.Synopsis != "" || d.Cover != "" || d.URL != "") {
-			libJSON(w, map[string]any{"meta": d.ExtMeta, "curated": true})
+		if d, err := l.GetEntryMeta(r.Context(), ref); err == nil && d != nil && (d.Synopsis != "" || d.Cover != "" || d.Banner != "" || d.URL != "") {
+			libJSON(w, map[string]any{"meta": d.ExtMeta.public(), "curated": true})
 			return
 		}
 		if kind == "" {

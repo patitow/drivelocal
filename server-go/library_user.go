@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"path"
 	"strings"
 )
 
@@ -91,6 +92,44 @@ func (l *Library) SaveProgress(ctx context.Context, userID string, mediaID int64
 		return nil, err
 	}
 	return &ProgressDTO{PositionS: in.PositionS, DurationS: in.DurationS, Completed: completed, AudioTrack: in.AudioTrack, SubtitleTrack: in.SubtitleTrack, UpdatedAt: now}, nil
+}
+
+// TrackPrefs: a última faixa de áudio e de legenda que o usuário usou na mesma série (tópico)
+// ou na mesma pasta, para o próximo episódio já abrir com a dublagem/legenda escolhida.
+type TrackPrefs struct {
+	Audio string `json:"audio,omitempty"`
+	Sub   string `json:"sub,omitempty"`
+}
+
+func (l *Library) TrackPrefs(ctx context.Context, userID string, mediaID int64, rel string) TrackPrefs {
+	dir := path.Dir(rel) + "/"
+	rows, err := l.r.QueryContext(ctx, `SELECT COALESCE(p.audio_track,''), COALESCE(p.subtitle_track,'')
+		FROM watch_progress p JOIN media m ON m.id = p.media_id
+		WHERE p.user_id = ? AND (p.audio_track IS NOT NULL OR p.subtitle_track IS NOT NULL) AND (
+		  p.media_id = ?
+		  OR p.media_id IN (SELECT o.media_id FROM topic_items ti JOIN topics t ON t.id = ti.topic_id AND t.kind = 'series'
+		                    JOIN topic_items o ON o.topic_id = ti.topic_id WHERE ti.media_id = ?)
+		  OR (substr(m.path, 1, length(?)) = ? AND instr(substr(m.path, length(?) + 1), '/') = 0))
+		ORDER BY p.updated_at DESC LIMIT 50`,
+		userID, mediaID, mediaID, dir, dir, dir)
+	var out TrackPrefs
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() && (out.Audio == "" || out.Sub == "") {
+		var a, s string
+		if rows.Scan(&a, &s) != nil {
+			break
+		}
+		if out.Audio == "" {
+			out.Audio = a
+		}
+		if out.Sub == "" {
+			out.Sub = s
+		}
+	}
+	return out
 }
 
 func (l *Library) ClearProgress(ctx context.Context, userID string, mediaID int64) error {

@@ -26,7 +26,6 @@ import {
 
 // Cada tela vira um pedaço separado do bundle: abrir o app baixa só a atual.
 const UserManagement = lazy(() => import('@/components/UserManagement').then((m) => ({ default: m.UserManagement })))
-const LibraryManagement = lazy(() => import('@/components/LibraryManagement').then((m) => ({ default: m.LibraryManagement })))
 
 type View = 'files' | 'catalog' | 'settings'
 
@@ -279,6 +278,7 @@ export function AppShell() {
 export function SettingsView() {
   const { role } = useAuth()
   const isAdmin = role === 'admin'
+  const navigate = useNavigate()
 
   return (
     <div className="h-full min-h-0 overflow-auto p-4 lg:p-6 landscape:max-lg:p-3">
@@ -289,9 +289,14 @@ export function SettingsView() {
       {isAdmin ? (
         <>
           <UserManagement />
-          <div className="mt-6">
-            <LibraryManagement />
-          </div>
+          {/* bibliotecas, montagens e regras de pasta ficam no Gerenciar da Coleção */}
+          <Card className="mt-6">
+            <CardHeader><CardTitle>Bibliotecas</CardTitle></CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+              <span className="flex-1">Pastas, montagens e maturidade por pasta agora ficam em Coleção → Gerenciar → Bibliotecas.</span>
+              <Button variant="outline" onClick={() => void navigate({ to: '/colecao/$tab', params: { tab: 'manage' }, search: { secao: 'bibliotecas' } as never })}>Abrir</Button>
+            </CardContent>
+          </Card>
         </>
       ) : (
         <Card>

@@ -80,6 +80,7 @@ func main() {
 
 	// Initialize logger first
 	initLogger()
+	procReset() // streams processados de uma execução anterior
 
 	// Initialize
 	ensureDirectories()

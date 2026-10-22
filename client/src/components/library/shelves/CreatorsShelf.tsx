@@ -11,8 +11,22 @@ import { PASTEL, Segmented, ShelfHeader, Still, initial, totalTime, type Shelf }
 import { CreatorActions, CreatorItemMenu } from './CreatorActions'
 import { useNavParam } from '@/lib/nav'
 import { useAuth } from '@/contexts/AuthContext'
+import { MetaBlurb, WebImg, useArt, useExtMeta } from '../ExtMeta'
+import { EditEntryButton } from '../EditEntryButton'
 
 const WEEK = 7 * 24 * 3600
+
+// Avatar do criador: a foto da ficha; sem ela (ou se falhar), a inicial no pastel.
+function CreatorAvatar({ title, photo, className, style }: { title: string; photo?: string; className: string; style: React.CSSProperties }) {
+  const [bad, setBad] = useState('')
+  return (
+    <span className={cn('flex shrink-0 items-center justify-center overflow-hidden rounded-full font-display font-extrabold', className)} style={style}>
+      {photo && bad !== photo
+        ? <WebImg src={photo} alt="" onFail={() => setBad(photo)} className="h-full w-full object-cover" />
+        : initial(title)}
+    </span>
+  )
+}
 
 // Ordem dos itens do perfil (lembrada neste navegador).
 type ItemSort = 'recent' | 'old' | 'name' | 'longest' | 'largest'
@@ -64,26 +78,31 @@ function ago(sec: number): string {
 function CreatorCard({ t, i, active, fresh, onOpen }: { t: TopicInfo; i: number; active?: boolean; fresh: boolean; onOpen: () => void }) {
   const tiles = (t.recent?.length ? t.recent : t.coverPath ? [t.coverPath] : []).slice(0, 3)
   const pastel = PASTEL[i % PASTEL.length]
+  const art = useArt(`topic:${t.id}`)
+  const [badBanner, setBadBanner] = useState('')
+  const banner = art?.banner && badBanner !== art.banner ? art.banner : ''
   return (
     <button type="button" onClick={onOpen} aria-pressed={active} data-testid="creator-card"
       className={cn('group flex min-w-0 flex-col overflow-hidden rounded-[20px] border bg-card text-left transition-colors hover:border-[#FF6B9A]/60', active && 'border-[#FF6B9A]')}>
       <span className={cn('relative grid aspect-[16/10] gap-[3px] overflow-hidden', tiles.length >= 3 ? 'grid-cols-[2fr_1fr] grid-rows-2' : tiles.length === 2 ? 'grid-cols-2' : 'grid-cols-1')}
         style={{ background: `${pastel}33` }}>
-        {tiles.map((p, k) => (
-          <span key={p} className={cn('relative min-h-0 overflow-hidden bg-muted', tiles.length >= 3 && k === 0 && 'row-span-2')}>
-            <Still path={p} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />
+        {banner
+          ? <span className="relative col-span-full row-span-full min-h-0 overflow-hidden bg-muted">
+            <WebImg src={banner} onFail={() => setBadBanner(banner)} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />
           </span>
-        ))}
+          : tiles.map((p, k) => (
+            <span key={p} className={cn('relative min-h-0 overflow-hidden bg-muted', tiles.length >= 3 && k === 0 && 'row-span-2')}>
+              <Still path={p} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />
+            </span>
+          ))}
         {fresh && (
           <span className="absolute right-2.5 top-2.5 rounded-full px-2.5 py-0.5 text-xs font-bold" style={{ background: '#FF6B9A', color: '#3A0A1D' }}>Novo</span>
         )}
         {t.favorite && <Heart className="absolute left-2.5 top-2.5 h-5 w-5 fill-[#FF6B9A] text-[#FF6B9A] drop-shadow" aria-label="Favorito" />}
       </span>
       <span className="relative flex items-end gap-3 px-4 pb-4">
-        <span className="-mt-7 flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-full font-display text-2xl font-extrabold"
-          style={{ background: pastel, color: '#1A1B21', boxShadow: '0 0 0 4px hsl(var(--card))' }}>
-          {initial(t.title)}
-        </span>
+        <CreatorAvatar title={t.title} photo={art?.cover} className="-mt-7 h-[60px] w-[60px] text-2xl"
+          style={{ background: pastel, color: '#1A1B21', boxShadow: '0 0 0 4px hsl(var(--card))' }} />
         <span className="min-w-0 pt-2.5">
           <span className="block truncate text-[15px] font-semibold">{t.title}</span>
           <span className="block truncate text-[13px] text-muted-foreground">
@@ -113,6 +132,11 @@ function CreatorProfile({ t, i, shelf, all: creators, onOpen, onClose, onChanged
   const photos = all.filter((it) => it.kind !== 'video')
   const shown = sortItems(tab === 'video' ? videos : tab === 'image' ? photos : all, sort)
   const pastel = PASTEL[i % PASTEL.length]
+  const art = useArt(`topic:${t.id}`)
+  const [badBanner, setBadBanner] = useState('')
+  const banner = art?.banner && badBanner !== art.banner ? art.banner : ''
+  // ficha curada no Gerenciar (bio, link)
+  const bio = useExtMeta(null, t.title, `topic:${t.id}`)
   const toggleFav = async () => {
     try {
       const r = await library.favoriteTopic(t.id, !fav)
@@ -130,6 +154,12 @@ function CreatorProfile({ t, i, shelf, all: creators, onOpen, onClose, onChanged
     <section aria-label={`Perfil de ${t.title}`} className="overflow-hidden rounded-3xl border bg-card">
       <div className="relative h-[110px] sm:h-[140px]"
         style={{ background: shelf.color, backgroundImage: `radial-gradient(circle at 12% 120%, #FFB3C9 0 120px, transparent 121px), radial-gradient(circle at 92% -20%, #E0457A 0 150px, transparent 151px)` }}>
+        {banner && (
+          <>
+            <WebImg src={banner} onFail={() => setBadBanner(banner)} className="absolute inset-0 h-full w-full object-cover" />
+            <span className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+          </>
+        )}
         {/* à esquerda, junto do resto da navegação */}
         <button type="button" onClick={onClose} aria-label="Fechar perfil"
           className="absolute left-3 top-3 flex h-9 items-center gap-1 rounded-full bg-black/30 pl-2 pr-3.5 text-sm font-medium text-white hover:bg-black/50">
@@ -137,13 +167,12 @@ function CreatorProfile({ t, i, shelf, all: creators, onOpen, onClose, onChanged
         </button>
       </div>
       <div className="relative -mt-11 flex flex-wrap items-start gap-x-6 gap-y-4 px-5 pb-7 sm:px-8">
-        <span className="flex h-[112px] w-[112px] shrink-0 items-center justify-center rounded-full font-display text-[44px] font-extrabold"
-          style={{ background: pastel, color: shelf.ink, boxShadow: '0 0 0 6px hsl(var(--card))' }}>
-          {initial(t.title)}
-        </span>
+        <CreatorAvatar title={t.title} photo={art?.cover} className="h-[112px] w-[112px] text-[44px]"
+          style={{ background: pastel, color: shelf.ink, boxShadow: '0 0 0 6px hsl(var(--card))' }} />
         <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-1.5 sm:pt-[60px]">
           <h3 className="break-words font-display text-[34px] font-extrabold leading-tight tracking-tight">{t.title}</h3>
           <p className="text-[15px] text-muted-foreground">{items.data ? meta : ' '}</p>
+          {bio?.synopsis && <MetaBlurb meta={bio} className="pt-1 [&_p]:text-muted-foreground" />}
         </div>
         <div className="flex gap-2.5 sm:pt-[64px]">
           <button type="button" disabled={videos.length === 0} onClick={() => onOpen(videos, 0)}
@@ -156,6 +185,7 @@ function CreatorProfile({ t, i, shelf, all: creators, onOpen, onClose, onChanged
             {fav ? 'Favoritado' : 'Favoritar'}
           </button>
           <CreatorActions t={t} all={creators} isAdmin={isAdmin} onChanged={onChanged} onRefresh={onRefresh} />
+          <EditEntryButton entryRef={`topic:${t.id}`} className="h-11 px-5 text-[15px]" />
         </div>
       </div>
       {all.length > 0 && (

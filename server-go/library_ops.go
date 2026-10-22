@@ -216,7 +216,7 @@ func (a *applier) topicID(ref *TopicRef, create bool) (int64, error) {
 	if kind == "" {
 		kind = "theme"
 	}
-	if kind != "series" && kind != "creator" && kind != "theme" {
+	if !topicKinds[kind] {
 		return 0, fmt.Errorf("tipo de tópico inválido: %q", kind)
 	}
 	if strings.TrimSpace(ref.Title) == "" {

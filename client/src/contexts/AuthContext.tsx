@@ -219,6 +219,11 @@ export function useAuthUsername(): string | null {
   return useContext(AuthContext)?.username ?? null
 }
 
+// Papel do usuário sem exigir o provider (null fora dele).
+export function useAuthRole(): string | null {
+  return useContext(AuthContext)?.role ?? null
+}
+
 export function useAuth() {
   const context = useContext(AuthContext)
   if (context === undefined) {

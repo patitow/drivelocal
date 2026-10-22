@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import { Play, Plus, Trash2, RefreshCw, Check, X } from 'lucide-react'
+import { Play, Plus, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -15,12 +15,11 @@ import {
   formatDuration,
   type LibraryItem,
   type Playlist,
-  type Suggestion,
 } from '@/lib/library'
 import { ItemGrid, Status, asFile, errorMessage, useInvalidateLibrary, useLoad, type OpenFn } from './catalogShared'
 import { HomeTab } from './HomeTab'
 import { SearchTab } from './SearchTab'
-import { TopicDupesReview } from './TopicDupesReview'
+import { WebImg, useArt } from './ExtMeta'
 import { SHELVES, ShelfPage, useCreatorNews, useShelfCounts } from './shelves'
 import { ManageTab } from './ManageTab'
 import { CATALOG_MORE, isShelfTab, type CatalogTab } from './CatalogNav'
@@ -118,7 +117,6 @@ export function CatalogView({ tab }: { tab: Tab }) {
       {tab === 'search' && <SearchTab onOpen={open} />}
       {tab === 'topics' && <TopicsTab onOpen={open} />}
       {tab === 'playlists' && <PlaylistsTab onOpen={open} />}
-      {tab === 'review' && isAdmin && <ReviewTab />}
       {tab === 'manage' && isAdmin && <ManageTab />}
 
       {player && current && current.kind === 'video' && (
@@ -193,8 +191,9 @@ function TopicsTab({ onOpen }: { onOpen: OpenFn }) {
       <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {list.data?.topics.map((t) => (
           <li key={t.id}>
-            <button type="button" onClick={() => setSel(t)} className="flex w-full items-center justify-between rounded-md border p-3 text-left hover:bg-accent">
-              <span className="min-w-0">
+            <button type="button" onClick={() => setSel(t)} className="flex w-full items-center gap-3 rounded-md border p-3 text-left hover:bg-accent">
+              <TopicArt id={t.id} />
+              <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium">{t.title}</span>
                 <span className="text-xs text-muted-foreground">{t.kind} · {t.count} itens</span>
               </span>
@@ -299,74 +298,11 @@ function PlaylistsTab({ onOpen }: { onOpen: OpenFn }) {
   )
 }
 
-function ReviewTab() {
-  const stats = useLoad(['admin', 'stats'], () => library.admin.stats())
-  const ai = useLoad(['admin', 'ai'], () => library.admin.aiStatus())
-  const review = useLoad(['admin', 'review'], () => library.admin.review(50))
-  const [busy, setBusy] = useState(false)
 
-  const decide = async (s: Suggestion[], accept: boolean) => {
-    setBusy(true)
-    try {
-      await library.admin.decide(s.map((x) => x.id), accept)
-      review.reload()
-    } catch (e) {
-      toast.error(errorMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={async () => {
-            await library.admin.scan().then(() => toast.success('Scan iniciado')).catch((e) => toast.error(errorMessage(e)))
-          }}
-        >
-          <RefreshCw className="mr-1 h-4 w-4" />Escanear agora
-        </Button>
-        {ai.data && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={async () => {
-              await library.admin.aiPause(!ai.data?.paused).catch((e) => toast.error(errorMessage(e)))
-              ai.reload()
-            }}
-          >
-            {ai.data.paused ? 'Retomar IA' : 'Pausar IA'}
-          </Button>
-        )}
-      </div>
-      <Status loading={stats.loading} error={stats.error} />
-      {stats.data && (
-        <pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 text-xs">{JSON.stringify({ catalogo: stats.data, ia: ai.data }, null, 2)}</pre>
-      )}
-      <TopicDupesReview />
-      <h2 className="font-semibold">Sugestões pendentes {review.data ? `(${review.data.total})` : ''}</h2>
-      <Status loading={review.loading} error={review.error} />
-      {review.data && review.data.suggestions.length > 0 && (
-        <div className="flex gap-2">
-          <Button size="sm" disabled={busy} onClick={() => decide(review.data!.suggestions, true)}><Check className="mr-1 h-4 w-4" />Aceitar visíveis</Button>
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => decide(review.data!.suggestions, false)}><X className="mr-1 h-4 w-4" />Rejeitar visíveis</Button>
-        </div>
-      )}
-      <ul className="space-y-2">
-        {review.data?.suggestions.map((s) => (
-          <li key={s.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm">
-            <span className="min-w-0 flex-1 truncate" title={s.path}>{s.title || s.path}</span>
-            <Badge variant="secondary">{s.kind}</Badge>
-            <code className="max-w-xs truncate text-xs">{JSON.stringify(s.value)}</code>
-            {s.confidence != null && <span className="text-xs text-muted-foreground">{Math.round(s.confidence * 100)}%</span>}
-            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Aceitar" disabled={busy} onClick={() => decide([s], true)}><Check className="h-4 w-4" /></Button>
-            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Rejeitar" disabled={busy} onClick={() => decide([s], false)}><X className="h-4 w-4" /></Button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
+// Capa/banner escolhidos no Gerenciar, também na lista de tópicos.
+function TopicArt({ id }: { id: number }) {
+  const art = useArt(`topic:${id}`)
+  const src = art?.cover || art?.banner
+  if (!src) return null
+  return <WebImg src={src} className={cn('h-12 shrink-0 rounded object-cover', art?.cover ? 'w-8' : 'w-20')} />
 }

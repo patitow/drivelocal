@@ -378,7 +378,10 @@ func TestStreamConcurrencyAndDisconnect(t *testing.T) {
 		t.Fatalf("full slots: got %d, want 503", resp.StatusCode)
 	}
 
-	// cliente desconecta no meio: o ffmpeg morre e a vaga volta
+	// cliente desconecta no meio: ocioso, o ffmpeg morre e a vaga volta
+	origGrace := procIdleGrace
+	procIdleGrace = 100 * time.Millisecond
+	t.Cleanup(func() { procIdleGrace = origGrace })
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/stream/long.avi?mode=transcode", nil)
 	resp, err := http.DefaultClient.Do(req)
