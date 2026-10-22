@@ -49,6 +49,8 @@ Pasta cheia de `.mkv` não é biblioteca. O DriveLocal varre suas pastas e trans
 - **Detecção de duplicatas** de séries e criadores escritos de jeitos diferentes (token set ratio, Jaro-Winkler e contenção), com fusão que guarda os apelidos e pode ser desfeita
 - **Regras, operações em lote com dry-run, histórico e desfazer** para tudo que altera o catálogo
 
+![Como o DriveLocal se conecta](./docs/assets/architecture.pt-BR.png)
+
 ### Pensado para agentes
 
 O DriveLocal tem **tokens de API** e uma CLI, `drivelocal-cli`. Um agente de IA (Claude Code, ou qualquer assistente com shell ou ferramentas MCP) busca no catálogo, consulta metadados, monta um lote, roda em dry-run e depois aplica ou desfaz. Curadoria em massa vira conversa, não uma tarde inteira clicando.
@@ -57,7 +59,7 @@ O DriveLocal tem **tokens de API** e uma CLI, `drivelocal-cli`. Um agente de IA 
 export DRIVELOCAL_URL=http://localhost
 export DRIVELOCAL_TOKEN=dlt_...          # criado por um admin: POST /api/admin/library/tokens
 
-drivelocal-cli search "korra"
+drivelocal-cli search "aurora"
 drivelocal-cli review --kind topic       # sugestões pendentes da IA
 drivelocal-cli accept 812 813
 drivelocal-cli batch ajustes.json --dry  # confere antes
