@@ -65,6 +65,7 @@ interface VideoPlayerProps {
 // Caminho que deve começar tocando ao abrir (definido pelo autoplay ao fim do anterior)
 let autoplayPendingPath: string | null = null
 const UP_NEXT_SECONDS = 8
+const LONG_PAUSE_MS = 3 * 60 * 1000 // pausado além disso, remux/transcode retomam com stream novo
 // Sem capítulo de abertura no arquivo: botão de pular este tanto (abertura típica de anime).
 const INTRO_GUESS_S = 85
 
@@ -89,6 +90,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   currentPathRef.current = file.path
   // Posição e estado de reprodução no momento de um erro, para retomar após o servidor voltar
   const resumeRef = useRef<{ time: number; wasPlaying: boolean } | null>(null)
+  const pausedAtRef = useRef<number | null>(null) // quando pausou (pause longo: o stream processado no servidor expira)
 
   // Faixas de áudio/legenda e modo de reprodução. minMode vem do servidor (direct/remux/transcode)
   // e sobe na cadeia de fallback se o navegador falhar; audioSel !== null = faixa que exige remux.
@@ -598,6 +600,22 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       }
     }
 
+    const handlePause = () => {
+      if (!video.ended) pausedAtRef.current = Date.now()
+    }
+
+    // Pause longo em remux/transcode: o servidor encerra o ffmpeg ocioso e depois apaga o arquivo,
+    // e continuar lendo bytes de um stream refeito leva a um ponto errado. Pede o stream de novo
+    // a partir da posição atual em vez de retomar o antigo.
+    const handlePlay = () => {
+      const pausedAt = pausedAtRef.current
+      pausedAtRef.current = null
+      if (pausedAt === null || modeRef.current === 'direct' || Date.now() - pausedAt < LONG_PAUSE_MS) return
+      video.pause()
+      pausedAtRef.current = null
+      void restartRef.current(lastTimeRef.current, true, true)
+    }
+
     const handlePlaying = () => {
       setHasStartedPlaying(true)
       setIsLoading(false)
@@ -613,6 +631,8 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     video.addEventListener('loadeddata', handleLoadedData)
     video.addEventListener('waiting', handleWaiting)
     video.addEventListener('playing', handlePlaying)
+    video.addEventListener('pause', handlePause)
+    video.addEventListener('play', handlePlay)
 
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata)
@@ -624,6 +644,8 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       video.removeEventListener('loadeddata', handleLoadedData)
       video.removeEventListener('waiting', handleWaiting)
       video.removeEventListener('playing', handlePlaying)
+      video.removeEventListener('pause', handlePause)
+      video.removeEventListener('play', handlePlay)
     }
   }, [src, hasStartedPlaying])
 
