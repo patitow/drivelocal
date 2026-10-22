@@ -44,7 +44,7 @@ Folders full of `.mkv` files are not a library. DriveLocal scans them and turns 
 ### Curation with AI, under your control
 
 - **Local AI classification**: a model you run yourself (any OpenAI-compatible endpoint, such as llama.cpp or llama-swap) reads file names and, when needed, a frame of the video, then proposes title, series, season, episode and tags
-- Answers are **constrained to a JSON schema**, the job runs **only inside a time window** (overnight, for example), and **every result is a suggestion**: nothing touches the catalog until you accept it in the review queue
+- Answers are **constrained to a JSON schema**, the job runs **only inside a time window** (overnight, for example), and **confident answers are applied on their own**: anything at or above the confidence threshold (`AI_AUTO_ACCEPT`, 0.9 by default) is applied with history and undo, while the rest waits in the review queue for you
 - Quality is measured against a **golden set** (`eval`), so prompt or model changes can be compared
 - **Duplicate detection** for series and creators with different spellings (token set ratio, Jaro-Winkler and containment), with merges that keep aliases and can be undone
 - **Rules, batch operations with dry-run, change history and undo** for everything that edits the catalog
@@ -113,6 +113,7 @@ Open http://localhost (or http://127.0.0.1:8080 if port 80 is taken). The exampl
 | `AI_API_KEY` | Key for that endpoint | empty |
 | `AI_TEXT_MODEL` / `AI_VISION_MODEL` | Models for text and vision | see `.env.example` |
 | `AI_WINDOW` / `AI_TZ` | When the AI is allowed to run | `01:00-08:00` |
+| `AI_AUTO_ACCEPT` | Confidence at or above which AI suggestions are applied without review (`0` turns it off) | `0.9` |
 
 Keys live only in `.env`, which is git-ignored.
 

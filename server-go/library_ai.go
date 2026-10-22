@@ -34,6 +34,9 @@ type AIConfig struct {
 	Window      string `json:"window"`
 	TZ          string `json:"tz"`
 	Enabled     bool   `json:"enabled"`
+	// AutoAccept: sugestões com confiança >= este valor são aplicadas sem
+	// revisão (com histórico e desfazer). 0 desliga.
+	AutoAccept float64 `json:"autoAccept"`
 	winStart    int    // minutos desde 00:00
 	winEnd      int
 	loc         *time.Location
@@ -49,6 +52,7 @@ func loadAIConfig() AIConfig {
 		TZ:          getEnv("AI_TZ", "America/Sao_Paulo"),
 	}
 	c.Enabled = c.BaseURL != "" && getEnv("AI_ENABLED", "true") != "false"
+	c.AutoAccept = parseAutoAccept(getEnv("AI_AUTO_ACCEPT", "0.9"))
 	c.winStart, c.winEnd = parseWindow(c.Window)
 	if loc, err := time.LoadLocation(c.TZ); err == nil {
 		c.loc = loc
@@ -56,6 +60,15 @@ func loadAIConfig() AIConfig {
 		c.loc = time.Local
 	}
 	return c
+}
+
+// parseAutoAccept lê o limiar de aceite automático; fora de (0, 1] desliga.
+func parseAutoAccept(s string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || v <= 0 || v > 1 {
+		return 0
+	}
+	return v
 }
 
 // parseWindow lê "HH:MM-HH:MM"; janela inválida vira 01:00-08:00.
@@ -483,6 +496,11 @@ func (l *Library) runNextAIJob(ctx context.Context, cfg AIConfig) (bool, error) 
 		l.w.ExecContext(ctx, `UPDATE ai_jobs SET status='error', error=?, updated_at=? WHERE id=?`, err.Error(), nowUnix(), j.id)
 		return true, nil
 	}
+	if res, err := l.autoAcceptSuggestions(ctx, j.mediaID, cfg.AutoAccept); err != nil {
+		logWarn("IA: aceite automático de %s: %v", j.path, err)
+	} else if res.Accepted > 0 {
+		logInfo("🤖 IA aplicou %d sugestões em %s (lote %s)", res.Accepted, j.path, res.BatchID)
+	}
 	l.w.ExecContext(ctx, `UPDATE ai_jobs SET status='done', error=NULL, updated_at=? WHERE id=?`, nowUnix(), j.id)
 	return true, nil
 }
@@ -739,6 +757,30 @@ func (l *Library) storeSuggestions(ctx context.Context, mediaID int64, model str
 		}
 		return nil
 	})
+}
+
+// autoAcceptSuggestions aplica as sugestões pendentes da IA para o item com
+// confiança >= min, no mesmo caminho do aceite manual (lote com desfazer).
+// Maturidade fica de fora: um erro ali muda quem vê o arquivo, então sempre
+// passa pela fila de revisão.
+func (l *Library) autoAcceptSuggestions(ctx context.Context, mediaID int64, min float64) (*ReviewResult, error) {
+	if min <= 0 {
+		return &ReviewResult{}, nil
+	}
+	rows, err := l.r.QueryContext(ctx, `SELECT id FROM suggestions
+		WHERE media_id=? AND status='pending' AND source='ai' AND kind<>'maturity' AND COALESCE(confidence, 0) >= ?
+		ORDER BY id`, mediaID, min)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	rows.Close()
+	return l.ReviewSuggestions(ctx, ids, true, "ia-auto")
 }
 
 type Suggestion struct {
