@@ -207,7 +207,7 @@ CREATE INDEX media_tags_tag ON media_tags(tag_id);
 
 CREATE TABLE topics (
   id INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL,                 -- series | creator | theme
+  kind TEXT NOT NULL,                 -- series | creator | theme | franchise
   slug TEXT NOT NULL,
   title TEXT NOT NULL,
   description TEXT,
@@ -603,6 +603,14 @@ func startLibrary(l *Library) {
 	logInfo("📚 Biblioteca aberta em %s", l.path)
 	go l.backupLoop()
 	go l.scanLoop()
+	go func() {
+		time.Sleep(20 * time.Second)
+		if _, err := l.purgeGone(context.Background()); err != nil {
+			logWarn("Limpeza de arquivos sumidos: %v", err)
+		}
+		l.backfillAutoTopics(context.Background())
+		l.localizeArtBacklog(context.Background())
+	}()
 	go startAIScheduler(l)
 }
 

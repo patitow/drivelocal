@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"os"
@@ -179,9 +177,9 @@ func acquireSlot(ctx context.Context, slots chan struct{}) bool {
 	return false
 }
 
-// streamProcessed entrega MP4 fragmentado gerado pelo ffmpeg (sem Content-Length, sem Range:
-// o seek é feito pelo cliente pedindo outro ?start=). mode=remux copia o vídeo; mode=transcode
-// recodifica para H.264. O ffmpeg morre quando o cliente desconecta (contexto da requisição).
+// streamProcessed entrega MP4 fragmentado gerado pelo ffmpeg. O seek é feito pelo cliente pedindo
+// outro ?start=; Range só serve para o <video> retomar o mesmo stream (ver media_stream_cache.go).
+// mode=remux copia o vídeo; mode=transcode recodifica para H.264.
 func streamProcessed(w http.ResponseWriter, r *http.Request, full string, info os.FileInfo) {
 	q := r.URL.Query()
 	mode := defaultStr(q.Get("mode"), "remux")
@@ -235,54 +233,7 @@ func streamProcessed(w http.ResponseWriter, r *http.Request, full string, info o
 	if mode == "transcode" {
 		slots, args = transcodeSlots, transcodeArgs(full, start, audioOrder, mi, delay)
 	}
-	if !acquireSlot(r.Context(), slots) {
-		w.Header().Set("Retry-After", "5")
-		http.Error(w, `{"error":"Too many concurrent transcodes"}`, http.StatusServiceUnavailable)
-		return
-	}
-	defer func() { <-slots }()
-
-	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Hour)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-	cmd.WaitDelay = 5 * time.Second // não fica preso se o ffmpeg demorar a sair após o kill
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		http.Error(w, `{"error":"Failed to start transcode"}`, http.StatusInternalServerError)
-		return
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		logError("ffmpeg %s start failed: %v", mode, err)
-		http.Error(w, `{"error":"Failed to start transcode"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// segura o cabeçalho até o primeiro bloco: se o ffmpeg falhar logo, ainda dá para responder erro
-	br := bufio.NewReaderSize(stdout, 64*1024)
-	if _, peekErr := br.Peek(1); peekErr != nil {
-		cmd.Wait()
-		logWarn("ffmpeg %s produced no output for %s: %s", mode, full, strings.TrimSpace(stderr.String()))
-		http.Error(w, `{"error":"Failed to process media"}`, http.StatusUnprocessableEntity)
-		return
-	}
-
-	w.Header().Set("Content-Type", "video/mp4")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Accept-Ranges", "none")
-	w.Header().Set("X-Playback-Mode", mode)
-	w.Header().Set("X-Stream-Lead", strconv.FormatFloat(streamLead, 'f', -1, 64))
-	w.WriteHeader(http.StatusOK)
-
-	_, copyErr := io.Copy(flushWriter{w}, br)
-	if copyErr != nil {
-		cancel() // cliente saiu: mata o ffmpeg
-	}
-	waitErr := cmd.Wait()
-	if copyErr == nil && waitErr != nil && r.Context().Err() == nil {
-		logWarn("ffmpeg %s ended with error for %s: %v: %s", mode, full, waitErr, strings.TrimSpace(stderr.String()))
-	}
+	serveProc(w, r, procKey(full, info, mode, audioOrder, start, delayMs), full, mode, slots, args)
 }
 
 // Linha do tempo dos streams processados (remux/transcode), medida no Chrome com o fixture de sincronia.

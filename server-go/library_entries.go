@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
 	"sort"
@@ -22,6 +23,19 @@ type EntryData struct {
 	ExtMeta
 	Cat        string `json:"cat,omitempty"`
 	Registered bool   `json:"registered,omitempty"`
+	// link de onde a capa/o banner foram baixados (a ficha guarda a cópia local)
+	CoverSrc  string `json:"coverSrc,omitempty"`
+	BannerSrc string `json:"bannerSrc,omitempty"`
+}
+
+// public: a ficha como a página a vê (arte local vira /api/art/...).
+func (d *EntryData) public() *EntryData {
+	if d == nil {
+		return nil
+	}
+	c := *d
+	c.ExtMeta = c.ExtMeta.public()
+	return &c
 }
 
 type Entry struct {
@@ -32,13 +46,28 @@ type Entry struct {
 	CoverPath string     `json:"coverPath,omitempty"`
 	TopicID   int64      `json:"topicId,omitempty"`
 	MediaID   int64      `json:"mediaId,omitempty"`
+	TopicKind string     `json:"topicKind,omitempty"`
 	Dir       string     `json:"dir,omitempty"`
 	Aliases   []string   `json:"aliases"`
 	Maturity  string     `json:"maturity"`
 	Meta      *EntryData `json:"meta,omitempty"`
 }
 
-var entryCats = map[string]bool{"creators": true, "animes": true, "series": true, "films": true, "mangas": true}
+var entryCats = map[string]bool{"creators": true, "animes": true, "series": true, "films": true, "franchises": true, "mangas": true}
+
+// franquia: sequência de filmes, na ordem do cadastro
+var topicKinds = map[string]bool{"series": true, "creator": true, "theme": true, "franchise": true}
+
+// topicKindOf: o tipo de tópico de cada estante feita de agrupamentos.
+func topicKindOf(cat string) string {
+	switch cat {
+	case "creators":
+		return "creator"
+	case "franchises":
+		return "franchise"
+	}
+	return "series"
+}
 
 // ---------- ficha curada ----------
 
@@ -56,6 +85,28 @@ func (l *Library) GetEntryMeta(ctx context.Context, ref string) (*EntryData, err
 		return nil, err
 	}
 	return &d, nil
+}
+
+// EntryArt: capa e banner da ficha, para os cards das estantes.
+type EntryArt struct {
+	Cover  string `json:"cover,omitempty"`
+	Banner string `json:"banner,omitempty"`
+}
+
+// EntryArts devolve, por ref, a arte das fichas que o usuário enxerga.
+func (l *Library) EntryArts(ctx context.Context, v Viewer) (map[string]EntryArt, error) {
+	all, err := l.allEntryMeta(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]EntryArt{}
+	for ref, d := range all {
+		a := EntryArt{Cover: artPublic(d.Cover), Banner: artPublic(d.Banner)}
+		if (a.Cover != "" || a.Banner != "") && l.entryVisible(ctx, v, ref) {
+			out[ref] = a
+		}
+	}
+	return out, nil
 }
 
 func (l *Library) allEntryMeta(ctx context.Context) (map[string]*EntryData, error) {
@@ -146,7 +197,7 @@ func (l *Library) ListEntries(ctx context.Context, cat, q string, limit int) ([]
 	}
 	var out []Entry
 	switch cat {
-	case "creators", "animes", "series":
+	case "creators", "animes", "series", "franchises":
 		out, err = l.topicEntries(ctx, cat, metas)
 	case "films":
 		out, err = l.filmEntries(ctx, metas)
@@ -177,10 +228,7 @@ func (l *Library) ListEntries(ctx context.Context, cat, q string, limit int) ([]
 // topicEntries: criadores, e séries divididas em animes (algum episódio na
 // pasta Animes, ou marcadas assim na ficha) e as demais.
 func (l *Library) topicEntries(ctx context.Context, cat string, metas map[string]*EntryData) ([]Entry, error) {
-	kind := "series"
-	if cat == "creators" {
-		kind = "creator"
-	}
+	kind := topicKindOf(cat)
 	rows, err := l.r.QueryContext(ctx, `
 		SELECT t.id, t.title, COUNT(m.id), COALESCE(MAX(m.maturity), 0),
 			COALESCE(MIN(CASE WHEN m.kind='video' THEN m.path END), MIN(m.path), ''),
@@ -204,7 +252,7 @@ func (l *Library) topicEntries(ctx context.Context, cat string, metas map[string
 			return nil, err
 		}
 		e.Ref = "topic:" + strconv.FormatInt(e.TopicID, 10)
-		e.Meta = metas[e.Ref]
+		e.Meta = metas[e.Ref].public()
 		e.Cat = cat
 		if kind == "series" {
 			// série só de imagens é mangá agrupado pelo scan: tem estante própria
@@ -256,7 +304,7 @@ func (l *Library) filmEntries(ctx context.Context, metas map[string]*EntryData) 
 			return nil, err
 		}
 		e.Ref = "media:" + strconv.FormatInt(e.MediaID, 10)
-		e.Cat, e.Count, e.Maturity, e.Aliases, e.Meta = "films", 1, maturityName(mat), []string{}, metas[e.Ref]
+		e.Cat, e.Count, e.Maturity, e.Aliases, e.Meta = "films", 1, maturityName(mat), []string{}, metas[e.Ref].public()
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -271,7 +319,7 @@ func (l *Library) mangaEntries(ctx context.Context, metas map[string]*EntryData)
 	out := make([]Entry, 0, len(works))
 	for _, w := range works {
 		e := Entry{Ref: "manga:" + w.Dir, Cat: "mangas", Title: w.Title, Count: w.Pages, CoverPath: w.Cover, Dir: w.Dir, Aliases: []string{}}
-		e.Meta = metas[e.Ref]
+		e.Meta = metas[e.Ref].public()
 		e.Maturity = maturityName(mats[w.Dir])
 		out = append(out, e)
 	}
@@ -310,6 +358,25 @@ func splitMangaWork(p string, registered []string) (work, chapter string, ok boo
 	return splitMangaPath(p)
 }
 
+// FindEntry: a entrada de um ref, em qualquer estante (link "Editar" das páginas).
+func (l *Library) FindEntry(ctx context.Context, ref string) (*Entry, error) {
+	if !validEntryRef(ref) {
+		return nil, errInvalid
+	}
+	for _, cat := range []string{"animes", "series", "creators", "films", "franchises", "mangas"} {
+		list, err := l.ListEntries(ctx, cat, "", 0)
+		if err != nil {
+			return nil, err
+		}
+		for i := range list {
+			if list[i].Ref == ref {
+				return &list[i], nil
+			}
+		}
+	}
+	return nil, errNotFound
+}
+
 // ---------- cadastro e edição ----------
 
 type EntryInput struct {
@@ -320,6 +387,7 @@ type EntryInput struct {
 	Dir       string     `json:"dir,omitempty"` // mangá: pasta da obra
 	AddIDs    []int64    `json:"addIds,omitempty"`
 	RemIDs    []int64    `json:"removeIds,omitempty"`
+	Order     []int64    `json:"order,omitempty"` // agrupamento: os itens na ordem escolhida
 	Maturity  *string    `json:"maturity,omitempty"` // aplica a todos os itens
 	Meta      *EntryData `json:"meta,omitempty"`
 	ClearMeta bool       `json:"clearMeta,omitempty"`
@@ -336,20 +404,17 @@ func (l *Library) CreateEntry(ctx context.Context, in EntryInput, actor string) 
 	}
 	var ref string
 	switch in.Cat {
-	case "creators", "animes", "series":
+	case "creators", "animes", "series", "franchises":
 		if title == "" {
 			return "", errInvalid
 		}
-		kind := "series"
-		if in.Cat == "creators" {
-			kind = "creator"
-		}
+		kind := topicKindOf(in.Cat)
 		id, err := l.CreateTopic(ctx, TopicInput{Kind: &kind, Title: &title, Aliases: in.Aliases})
 		if err != nil {
 			return "", err
 		}
 		ref = "topic:" + strconv.FormatInt(id, 10)
-		if in.Cat != "creators" {
+		if in.Cat == "animes" || in.Cat == "series" {
 			// a categoria fica na ficha: uma série nova e vazia já sabe sua estante
 			d := EntryData{}
 			if in.Meta != nil {
@@ -438,6 +503,11 @@ func (l *Library) UpdateEntry(ctx context.Context, in EntryInput, actor string) 
 				return err
 			}
 		}
+		if len(in.Order) > 0 {
+			if err := l.setTopicOrder(ctx, id, in.Order); err != nil {
+				return err
+			}
+		}
 		if in.Maturity != nil {
 			if err := l.applyEntryMaturity(ctx, `SELECT media_id FROM topic_items WHERE topic_id=?`, []any{id}, *in.Maturity, actor); err != nil {
 				return err
@@ -483,13 +553,22 @@ func (l *Library) UpdateEntry(ctx context.Context, in EntryInput, actor string) 
 	}
 	if in.Meta != nil {
 		d := *in.Meta
+		d.Cover, d.Banner = artStored(d.Cover), artStored(d.Banner)
 		if old, _ := l.GetEntryMeta(ctx, in.Ref); old != nil {
 			// a ficha editada não perde a categoria nem o cadastro
 			if d.Cat == "" {
 				d.Cat = old.Cat
 			}
 			d.Registered = d.Registered || old.Registered
+			if d.Cover == old.Cover && d.CoverSrc == "" {
+				d.CoverSrc = old.CoverSrc
+			}
+			if d.Banner == old.Banner && d.BannerSrc == "" {
+				d.BannerSrc = old.BannerSrc
+			}
 		}
+		// links da web expiram: a ficha guarda a cópia local
+		l.localizeEntry(ctx, &d)
 		return l.SetEntryMeta(ctx, in.Ref, d, actor)
 	}
 	return nil
@@ -584,6 +663,15 @@ func libEntriesHandler(l *Library, w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	switch r.Method {
 	case http.MethodGet:
+		if ref := r.URL.Query().Get("ref"); ref != "" {
+			e, err := l.FindEntry(ctx, ref)
+			if err != nil {
+				libFail(w, err)
+				return
+			}
+			libJSON(w, map[string]any{"entry": e})
+			return
+		}
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		if limit <= 0 || limit > 2000 {
 			limit = 500
@@ -633,6 +721,60 @@ func libImageFoldersHandler(l *Library, w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	libJSON(w, map[string]any{"folders": list})
+}
+
+// setTopicOrder grava a ordem escolhida dos itens (sort_key "o0001"...): ela
+// vence a ordem do nome do arquivo.
+func (l *Library) setTopicOrder(ctx context.Context, topicID int64, ids []int64) error {
+	return l.tx(ctx, func(t *sql.Tx) error {
+		for i, mid := range ids {
+			if _, err := t.Exec(`UPDATE topic_items SET sort_key=? WHERE topic_id=? AND media_id=?`, fmt.Sprintf("o%04d", i+1), topicID, mid); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Franchises: as franquias cadastradas, com os filmes na ordem, para a estante
+// Filmes e Séries (o resto dos filmes ainda se agrupa pelo começo do nome).
+type Franchise struct {
+	ID    int64   `json:"id"`
+	Title string  `json:"title"`
+	Items []int64 `json:"items"`
+}
+
+func (l *Library) Franchises(ctx context.Context, v Viewer) ([]Franchise, error) {
+	vis, vargs := v.visibleSQL(false)
+	rows, err := l.r.QueryContext(ctx, `SELECT tp.id, tp.title, ti.media_id FROM topics tp
+		JOIN topic_items ti ON ti.topic_id = tp.id JOIN media m ON m.id = ti.media_id
+		WHERE tp.kind = 'franchise' AND `+vis+` ORDER BY tp.title COLLATE NOCASE, tp.id, ti.sort_key, m.path`, vargs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Franchise{}
+	for rows.Next() {
+		var id, mid int64
+		var title string
+		if err := rows.Scan(&id, &title, &mid); err != nil {
+			return nil, err
+		}
+		if n := len(out); n == 0 || out[n-1].ID != id {
+			out = append(out, Franchise{ID: id, Title: title})
+		}
+		out[len(out)-1].Items = append(out[len(out)-1].Items, mid)
+	}
+	return out, rows.Err()
+}
+
+func libFranchisesHandler(l *Library, w http.ResponseWriter, r *http.Request) {
+	list, err := l.Franchises(r.Context(), l.viewer(r))
+	if err != nil {
+		libFail(w, err)
+		return
+	}
+	libJSON(w, map[string]any{"franchises": list})
 }
 
 // TVSeries: séries para a estante Filmes e Séries — as cadastradas como série

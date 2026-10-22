@@ -4,10 +4,15 @@ import { useState } from 'react'
 import { useNavParam } from '@/lib/nav'
 import { Check, FileWarning, Play } from 'lucide-react'
 import { cn, formatFileSize } from '@/lib/utils'
+import { useNavigate } from '@tanstack/react-router'
+import { toast } from 'sonner'
+import { Pencil } from 'lucide-react'
 import { library, formatDuration, type LibraryItem, type TopicCard } from '@/lib/library'
+import { useAuthRole } from '@/contexts/AuthContext'
 import { Thumbnail } from '@/components/Thumbnail'
-import { FavoriteButton, Status, asFile, progressPct, useLoad, type OpenFn } from '../catalogShared'
-import { useExtMeta } from '../ExtMeta'
+import { FavoriteButton, Status, asFile, errorMessage, progressPct, useLoad, type OpenFn } from '../catalogShared'
+import { ArtFrame, useArt, useExtMeta } from '../ExtMeta'
+import { EditEntryButton } from '../EditEntryButton'
 import { FilterChips, SORT_LABEL, ShelfHeader, initial, shelfById, type Shelf, type Sort, type View } from './shelfUi'
 import { SeriesDetail } from './series'
 import { animeFilms as loadAnimeFilms, filmInfo, franchises, inFranchise, type Franchise } from './films'
@@ -37,13 +42,14 @@ function FilmHero({ it, shelf, onPlay }: { it: LibraryItem; shelf: Shelf; onPlay
   const going = pct > 0 && pct < 95
   const info = filmInfo(it)
   const meta = useExtMeta('movie', info.title, `media:${it.id}`)
+  const art = useArt(`media:${it.id}`)
   const year = meta?.year ?? info.year
   return (
     <section aria-label="Destaque" className="overflow-hidden rounded-[28px] bg-black">
       <div className="h-3 bg-black sm:h-5" />
       <button type="button" onClick={onPlay} aria-label={`${going ? 'Continuar' : 'Assistir'} ${info.title}`}
         className="group relative block aspect-[16/9] w-full overflow-hidden text-left sm:aspect-[2.39/1]">
-        <Thumbnail file={asFile(it)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]" size="md" />
+        <ArtFrame art={art} fallback={<Thumbnail file={asFile(it)} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]" size="md" />} />
         <span className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
         <span className="absolute inset-x-0 bottom-0 flex flex-col gap-3 p-5 sm:p-9">
           <span className="text-sm font-semibold" style={{ color: isAnime(it) ? ANIME.color : shelf.color }}>
@@ -71,6 +77,7 @@ function FilmCard({ it, shelf, onOpen, title, num, sort }: {
   const pct = progressPct(it)
   const info = filmInfo(it)
   const done = !!it.progress?.completed
+  const art = useArt(`media:${it.id}`)
   const meta = [
     sort === 'largest' ? formatFileSize(it.size) : '',
     info.year ? String(info.year) : '',
@@ -81,7 +88,7 @@ function FilmCard({ it, shelf, onOpen, title, num, sort }: {
       <button type="button" onClick={onOpen} aria-label={`Abrir ${info.title}`} data-testid="film-card"
         className="relative block aspect-video overflow-hidden rounded-xl bg-muted outline-none ring-offset-2 ring-offset-background transition-shadow focus-visible:ring-2 group-hover:ring-2"
         style={{ ['--tw-ring-color' as string]: shelf.color }}>
-        <Thumbnail file={asFile(it)} className="h-full w-full object-cover" size="md" />
+        <ArtFrame art={art} fallback={<Thumbnail file={asFile(it)} className="h-full w-full object-cover" size="md" />} />
         {num != null && (
           <span className="absolute bottom-1 left-2.5 font-display text-5xl font-extrabold leading-none tracking-tighter text-white/90 drop-shadow-[0_2px_8px_rgba(0,0,0,0.7)]">{num}</span>
         )}
@@ -99,9 +106,42 @@ function FilmCard({ it, shelf, onOpen, title, num, sort }: {
         )}
       </button>
       <FavoriteButton item={it} className="absolute right-2 top-2 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100" />
+      <EditEntryButton compact entryRef={`media:${it.id}`} className="absolute right-12 top-2 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100" />
       <span className="line-clamp-2 font-display text-[17px] font-bold leading-tight tracking-tight" title={it.path}>{title ?? info.title}</span>
       {meta && <span className="-mt-1 text-[13px] tabular-nums text-muted-foreground">{meta}</span>}
     </div>
+  )
+}
+
+// Editar a franquia no Gerenciar. A achada pelo nome vira cadastrada antes,
+// com os filmes na ordem em que aparecem.
+function EditFranchise({ f }: { f: Franchise }) {
+  if (useAuthRole() !== 'admin') return null
+  return <EditFranchiseButton f={f} />
+}
+
+function EditFranchiseButton({ f }: { f: Franchise }) {
+  const navigate = useNavigate()
+  const [busy, setBusy] = useState(false)
+  const go = async () => {
+    setBusy(true)
+    try {
+      const ref = f.id ? `topic:${f.id}` : (await library.admin.createEntry({
+        cat: 'franchises', title: f.name, addIds: f.items.map((it) => it.id),
+      })).ref
+      if (!f.id) await library.admin.updateEntry({ ref, order: f.items.map((it) => it.id) })
+      void navigate({ to: '/colecao/$tab', params: { tab: 'manage' }, search: { editar: ref, volta: 1 } as never })
+    } catch (e) {
+      toast.error(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button type="button" disabled={busy} onClick={() => void go()} aria-label={`Editar franquia ${f.name}`}
+      className="flex h-11 items-center gap-2 rounded-full border px-5 text-sm font-medium hover:bg-secondary disabled:opacity-50">
+      <Pencil className="h-4 w-4" />Editar
+    </button>
   )
 }
 
@@ -123,6 +163,7 @@ function FranchiseRow({ f, shelf, onOpen }: { f: Franchise; shelf: Shelf; onOpen
           </p>
         </div>
         <div className="flex-1" />
+        <EditFranchise f={f} />
         <button type="button" onClick={() => onOpen(f.items, seen >= n ? 0 : next)}
           className="flex h-11 items-center gap-2 rounded-full px-6 text-sm font-semibold" style={{ background: shelf.color, color: shelf.ink }}>
           <Play className="h-4 w-4 fill-current" />{seen === 0 ? 'Assistir em ordem' : seen >= n ? 'Rever do começo' : `Continuar no ${next + 1}º`}
@@ -138,11 +179,12 @@ function FranchiseRow({ f, shelf, onOpen }: { f: Franchise; shelf: Shelf; onOpen
 }
 
 function TVSeriesCard({ t, shelf, onClick }: { t: TopicCard; shelf: Shelf; onClick: () => void }) {
+  const art = useArt(`topic:${t.id}`)
   return (
     <button type="button" onClick={onClick} aria-label={`Abrir ${t.title}`}
       className="group flex min-w-0 flex-col gap-3 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <div className="relative aspect-video overflow-hidden rounded-xl bg-muted ring-1 ring-white/5 transition-transform duration-200 group-hover:-translate-y-0.5">
-        {t.coverPath && <Thumbnail file={asFile({ id: t.id, path: t.coverPath, name: t.title, kind: 'video' } as LibraryItem)} className="h-full w-full object-cover" size="md" />}
+        <ArtFrame art={art} fallback={t.coverPath && <Thumbnail file={asFile({ id: t.id, path: t.coverPath, name: t.title, kind: 'video' } as LibraryItem)} className="h-full w-full object-cover" size="md" />} />
         <span className="absolute left-2 top-2 rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ background: shelf.color, color: shelf.ink }}>
           {t.count} {t.count === 1 ? 'episódio' : 'episódios'}
         </span>
@@ -178,6 +220,7 @@ function FilmsAndSeries({ shelf, onOpen, onSerie }: { shelf: Shelf; onOpen: Open
   const res = useLoad(['films', shelf.root, view], () => library.items({ root: shelf.root, ...flags, limit: 400, sort: 'title' }))
   const anime = useLoad(['films-anime', view], () => loadAnimeFilms(flags))
   const tv = useLoad(['tv-series'], () => library.tvSeries())
+  const saved = useLoad(['franchises'], () => library.franchises())
   const tvAll = tv.data ?? []
   const tvList = view === 'unwatched' ? tvAll.filter((t) => t.watched < t.count) : view === 'favorites' ? [] : tvAll
   const own = res.data?.items ?? []
@@ -189,9 +232,16 @@ function FilmsAndSeries({ shelf, onOpen, onSerie }: { shelf: Shelf; onOpen: Open
   const play = (it: LibraryItem) => onOpen(items, Math.max(0, items.indexOf(it)))
   // A–Z: franquias e filmes de anime em destaque; o resto em seções por letra.
   const byTitle = sort === 'title'
-  const fr = byTitle ? franchises(own) : []
+  // as cadastradas no Gerenciar valem; o resto se agrupa pelo começo do nome
+  const byId = new Map([...own, ...animeFilms].map((it) => [it.id, it]))
+  const manual: Franchise[] = (saved.data ?? []).map((s) => ({
+    id: s.id, name: s.title, items: s.items.map((id) => byId.get(id)).filter((it): it is LibraryItem => !!it),
+  })).filter((f) => f.items.length > 0)
+  const taken = new Set(manual.flatMap((f) => f.items.map((it) => it.id)))
+  const fr = byTitle ? [...manual, ...franchises(own.filter((it) => !taken.has(it.id)))].sort((a, b) => cmp.compare(a.name, b.name)) : []
   const inFr = new Set(fr.flatMap((f) => f.items.map((it) => it.id)))
   const rest = byTitle ? items.filter((it) => !inFr.has(it.id) && !isAnime(it)) : items
+  const animeLoose = animeFilms.filter((it) => !inFr.has(it.id))
   const sections = byTitle
     ? rest.reduce<Array<{ letter: string; items: LibraryItem[] }>>((acc, it) => {
       const c = initial(filmTitle(it)).normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -238,14 +288,14 @@ function FilmsAndSeries({ shelf, onOpen, onSerie }: { shelf: Shelf; onOpen: Open
       )}
       {!loading && items.length === 0 && tvList.length === 0 && <p className="text-sm text-muted-foreground">Nada por aqui.</p>}
       {fr.map((f) => <FranchiseRow key={f.name} f={f} shelf={shelf} onOpen={onOpen} />)}
-      {byTitle && animeFilms.length > 0 && (
+      {byTitle && animeLoose.length > 0 && (
         <section aria-label="Filmes de anime" className="space-y-4">
           <div>
             <h3 className="font-display text-[26px] font-bold tracking-tight">Filmes de anime</h3>
             <p className="text-sm text-muted-foreground">Também aparecem na estante Animes.</p>
           </div>
           <div className={grid}>
-            {animeFilms.map((it) => <FilmCard key={it.id} it={it} shelf={shelf} onOpen={() => play(it)} />)}
+            {animeLoose.map((it) => <FilmCard key={it.id} it={it} shelf={shelf} onOpen={() => play(it)} />)}
           </div>
         </section>
       )}

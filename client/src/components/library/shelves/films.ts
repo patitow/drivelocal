@@ -43,7 +43,8 @@ const keyOf = (t: string) => {
   return w.length > n ? w.slice(0, n).join(' ') : ''
 }
 
-export interface Franchise { name: string; items: LibraryItem[] }
+// id: a cadastrada no Gerenciar; sem id, a achada pelo começo do nome
+export interface Franchise { id?: number; name: string; items: LibraryItem[] }
 
 // Franquia: dois ou mais filmes que começam com as mesmas palavras
 // ("Carros Velozes ..."). O nome é o maior começo comum entre eles.

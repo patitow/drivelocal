@@ -139,7 +139,9 @@ export interface FeedPage { items: FeedItem[]; next: number }
 export interface TopicDupMember { id: number; title: string; count: number; score: number; examples: string[] }
 export interface TopicDupGroup { kind: string; canonical: TopicDupMember; members: TopicDupMember[]; score: number }
 export interface TopicMergeBatch { batchId: string; into: string; merged: string[]; actor: string; createdAt: number; undone: boolean }
-export interface PathProgress { mediaId: number; progress?: Progress | null; favorite: boolean; prefs: Prefs }
+// tracks: última faixa de áudio ("idioma|título") e legenda (idioma ou 'off') usada na série
+export interface PathProgress { mediaId: number; progress?: Progress | null; favorite: boolean; prefs: Prefs; tracks?: { audio?: string; sub?: string } }
+export interface TrackChoice { audioTrack?: string; subtitleTrack?: string }
 
 // Monta a query string no formato que o servidor lê (tags separadas por vírgula).
 export function itemQueryParams(q: ItemQuery): Record<string, string> {
@@ -163,7 +165,10 @@ async function call<T>(method: string, url: string, data?: unknown, params?: Rec
 export type MetaSource = 'anilist' | 'mal' | 'kitsu' | 'imdb' | 'tmdb' | 'tvmaze' | 'wikipedia'
 export type MetaKind = 'anime' | 'manga' | 'movie' | 'series' | 'person'
 // Cadastro: entradas de cada estante e a ficha curada (vence a busca automática).
-export type EntryCat = 'animes' | 'films' | 'series' | 'mangas' | 'creators'
+export interface EntryArt { cover?: string; banner?: string }
+export type EntryCat = 'animes' | 'films' | 'franchises' | 'series' | 'mangas' | 'creators'
+// franquia cadastrada: os filmes na ordem escolhida
+export interface FranchiseInfo { id: number; title: string; items: number[] }
 export interface EntryData extends Partial<Omit<ExtMeta, 'source'>> { source?: ExtMeta['source']; cat?: string; registered?: boolean }
 export interface Entry {
   ref: string
@@ -186,6 +191,7 @@ export interface EntryInput {
   dir?: string
   addIds?: number[]
   removeIds?: number[]
+  order?: number[] // agrupamento: os itens na ordem escolhida
   maturity?: Maturity | 'auto'
   meta?: EntryData
   clearMeta?: boolean
@@ -226,6 +232,7 @@ export const library = {
     call<GroupedSearch>('GET', '/api/catalog/search', undefined, { ...itemQueryParams(q), group: 'series' }),
   home: () => call<HomeData>('GET', '/api/catalog/home'),
   tvSeries: () => call<{ series: TopicCard[] }>('GET', '/api/catalog/tv-series').then((r) => r.series),
+  franchises: () => call<{ franchises: FranchiseInfo[] }>('GET', '/api/catalog/franchises').then((r) => r.franchises ?? []),
   feed: (scope: FeedScope, seed: number, offset: number, limit = 24) =>
     call<FeedPage>('GET', '/api/catalog/feed', undefined, { scope, seed: String(seed), offset: String(offset), limit: String(limit) }),
   mangas: () => call<{ works: MangaWork[] }>('GET', '/api/catalog/mangas').then((r) => r.works ?? []),
@@ -247,10 +254,12 @@ export const library = {
   // ref: ficha curada no cadastro (topic:<id>, media:<id>, manga:<pasta>)
   meta: (kind: 'anime' | 'manga' | 'movie' | null, q: string, ref?: string) =>
     call<{ meta: ExtMeta | null }>('GET', '/api/meta', undefined, { q, ...(kind ? { kind } : {}), ...(ref ? { ref } : {}) }).then((r) => r.meta),
+  // capa e banner das fichas do cadastro, por ref (para os cards)
+  art: () => call<{ art: Record<string, EntryArt> }>('GET', '/api/meta/art').then((r) => r.art ?? {}),
   setRestrictedMode: (on: boolean) => call<Prefs>('PUT', '/api/me/prefs', { restrictedMode: on }),
   progressByPath: (path: string) => call<PathProgress>('GET', '/api/me/progress', undefined, { path }),
-  saveProgressByPath: (path: string, positionS: number, durationS: number, completed?: boolean) =>
-    call<unknown>('PUT', '/api/me/progress', { positionS, durationS, completed }, { path }),
+  saveProgressByPath: (path: string, positionS: number, durationS: number, completed?: boolean, tracks?: TrackChoice) =>
+    call<unknown>('PUT', '/api/me/progress', { positionS, durationS, completed, ...tracks }, { path }),
   clearProgress: (id: number) => call<unknown>('DELETE', `/api/me/progress/${id}`),
   playlists: () => call<{ playlists: Playlist[] }>('GET', '/api/playlists').then((r) => r.playlists ?? []),
   playlist: (id: number) => call<{ playlist: Playlist; items: LibraryItem[] }>('GET', `/api/playlists/${id}`),
@@ -286,8 +295,17 @@ export const library = {
     renameTopic: (id: number, title: string, revert = false) => call<unknown>('PATCH', `/api/admin/library/topics/${id}`, { title, revert }),
     entries: (cat: EntryCat, q = '') =>
       call<{ entries: Entry[] }>('GET', '/api/admin/library/entries', undefined, q ? { cat, q } : { cat }).then((r) => r.entries ?? []),
+    entry: (ref: string) => call<{ entry: Entry }>('GET', '/api/admin/library/entries', undefined, { ref }).then((r) => r.entry),
     createEntry: (input: EntryInput) => call<{ ref: string }>('POST', '/api/admin/library/entries', input),
     updateEntry: (input: EntryInput) => call<{ ref: string }>('PUT', '/api/admin/library/entries', input),
+    // guarda uma imagem no acervo local (de um link ou de um item) e devolve o endereço
+    storeArt: (src: { url?: string; mediaId?: number; at?: number; crop?: { x: number; y: number; w: number; h: number } }) => call<{ ref: string; url: string }>('POST', '/api/admin/library/art', src),
+    uploadArt: (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return api.request<{ ref: string; url: string }>({ method: 'POST', url: '/api/admin/library/art', data: fd, headers: { 'Content-Type': 'multipart/form-data' } })
+        .then((r) => r.data)
+    },
     deleteEntry: (ref: string) => call<unknown>('DELETE', '/api/admin/library/entries', undefined, { ref }),
     imageFolders: (q: string) =>
       call<{ folders: { dir: string; pages: number }[] }>('GET', '/api/admin/library/image-folders', undefined, { q }).then((r) => r.folders ?? []),

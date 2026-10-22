@@ -372,6 +372,20 @@ func TestLibraryProgressFavoritesPlaylists(t *testing.T) {
 		t.Fatal("progresso vazou para outro usuário")
 	}
 
+	// Faixas escolhidas valem para os outros episódios da série (a mais recente de cada tipo)
+	if tp := l.TrackPrefs(ctx, "u-new", ep3, "Animes/Serie Exemplo/x.mkv"); tp != (TrackPrefs{}) {
+		t.Fatalf("sem escolha ainda: %+v", tp)
+	}
+	l.SaveProgress(ctx, "u-new", ep1, ProgressInput{PositionS: 1350, DurationS: 1400, AudioTrack: "jpn", SubtitleTrack: "por"})
+	l.w.Exec(`UPDATE watch_progress SET updated_at = updated_at - 10`)
+	l.SaveProgress(ctx, "u-new", ep2, ProgressInput{PositionS: 10, DurationS: 1400, AudioTrack: "por|Dublado"})
+	if tp := l.TrackPrefs(ctx, "u-new", ep3, "Animes/Serie Exemplo/x.mkv"); tp.Audio != "por|Dublado" || tp.Sub != "por" {
+		t.Fatalf("faixas da série: %+v", tp)
+	}
+	if tp := l.TrackPrefs(ctx, "u-old", ep3, "Animes/Serie Exemplo/x.mkv"); tp != (TrackPrefs{}) {
+		t.Fatalf("faixas vazaram para outro usuário: %+v", tp)
+	}
+
 	if err := l.SetFavorite(ctx, "u-new", ep2, true); err != nil {
 		t.Fatal(err)
 	}

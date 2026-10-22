@@ -14,7 +14,7 @@ vi.mock('@/lib/library', async (orig) => {
     library: {
       ...real.library,
       items: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 0, offset: 0 }),
-      admin: { ...real.library.admin, entries: vi.fn(), createEntry: vi.fn(), updateEntry: vi.fn(), deleteEntry: vi.fn(), searchMeta: vi.fn(), imageFolders: vi.fn() },
+      admin: { ...real.library.admin, entries: vi.fn(), entry: vi.fn(), createEntry: vi.fn(), updateEntry: vi.fn(), deleteEntry: vi.fn(), searchMeta: vi.fn(), imageFolders: vi.fn(), acceptTopicDupes: vi.fn(), undoTopicMerge: vi.fn() },
     },
   }
 })
@@ -26,6 +26,7 @@ describe('ManageTab', () => {
   beforeEach(() => {
     Object.values(admin).forEach((f) => f.mockReset?.())
     admin.entries.mockImplementation((cat: string) => Promise.resolve(cat === 'animes' ? [serie] : []))
+    admin.entry.mockImplementation((ref: string) => (ref === serie.ref ? Promise.resolve(serie) : Promise.reject(new Error('não achou'))))
     admin.updateEntry.mockResolvedValue({ ref: 'topic:7' })
     admin.createEntry.mockResolvedValue({ ref: 'manga:Pasta X' })
     admin.imageFolders.mockResolvedValue([{ dir: 'Pasta X', pages: 30 }])
@@ -66,5 +67,17 @@ describe('ManageTab', () => {
     expect(admin.deleteEntry).not.toHaveBeenCalled()
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar exclusão' }))
     expect(admin.deleteEntry).toHaveBeenCalledWith('topic:7')
+  })
+
+  it('junta outra entrada nesta, com desfazer', async () => {
+    const outra: Entry = { ...serie, ref: 'topic:8', topicId: 8, title: 'Serie Exemplo 2', count: 3 }
+    admin.entries.mockImplementation((cat: string) => Promise.resolve(cat === 'animes' ? [serie, outra] : []))
+    admin.acceptTopicDupes.mockResolvedValue({ batchId: 'b1', merged: 1 })
+    render(<ManageTab />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar Serie Exemplo' }))
+    await userEvent.click(await screen.findByRole('button', { name: /Juntar com/ }))
+    const list = await screen.findByRole('list', { name: 'Entradas para juntar' })
+    await userEvent.click(await within(list).findByRole('button', { name: /Serie Exemplo 2/ }))
+    expect(admin.acceptTopicDupes).toHaveBeenCalledWith(7, [8])
   })
 })

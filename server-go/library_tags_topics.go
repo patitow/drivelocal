@@ -389,7 +389,7 @@ func (l *Library) CreateTopic(ctx context.Context, in TopicInput) (int64, error)
 	if in.Kind != nil {
 		kind = *in.Kind
 	}
-	if kind != "series" && kind != "creator" && kind != "theme" {
+	if !topicKinds[kind] {
 		return 0, errInvalid
 	}
 	var id int64
@@ -468,7 +468,7 @@ func (l *Library) UpdateTopic(ctx context.Context, id int64, in TopicInput) erro
 				return err
 			}
 		}
-		if in.Kind != nil && (*in.Kind == "series" || *in.Kind == "creator" || *in.Kind == "theme") {
+		if in.Kind != nil && topicKinds[*in.Kind] {
 			if _, err := t.Exec(`UPDATE topics SET kind=? WHERE id=?`, *in.Kind, id); err != nil {
 				return errInvalid
 			}

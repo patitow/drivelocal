@@ -107,6 +107,17 @@ func TestEntriesCreateEditDelete(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Outra.") {
 		t.Fatalf("meta curada: %d %s", rec.Code, rec.Body)
 	}
+	// a arte vai para os cards de quem vê a entrada (só URLs http)
+	if err := l.UpdateEntry(ctx, EntryInput{Ref: ref, Meta: &EntryData{ExtMeta: ExtMeta{Synopsis: "Outra.",
+		Cover: "https://img/c.jpg", Banner: "javascript:alert(1)"}}}, "adm"); err != nil {
+		t.Fatal(err)
+	}
+	if art, _ := l.EntryArts(ctx, l.viewerFor("u-admin")); art[ref] != (EntryArt{Cover: "https://img/c.jpg"}) {
+		t.Fatalf("arte: %+v", art)
+	}
+	if art, _ := l.EntryArts(ctx, Viewer{UserID: "x", MaxMaturity: -1}); len(art) != 0 {
+		t.Fatalf("arte para quem não vê: %+v", art)
+	}
 	// quem não vê nenhum item da entrada não recebe a ficha
 	if l.entryVisible(ctx, Viewer{UserID: "x", MaxMaturity: -1}, ref) || !l.entryVisible(ctx, l.viewerFor("u-admin"), ref) {
 		t.Fatal("visibilidade da ficha")
@@ -195,6 +206,16 @@ func TestSearchMetaSources(t *testing.T) {
 		case r.URL.Path == "/search/shows":
 			w.Write([]byte(`[{"show":{"url":"https://tvmaze/1","name":"Serie Exemplo","premiered":"2010-01-01","summary":"<p>Uma <b>série</b>.</p>",
 				"genres":["Drama"],"rating":{"average":7.5},"image":{"original":"https://img/o.jpg"}}}]`))
+		case r.URL.Path == "/mal/anime":
+			if r.Header.Get("X-MAL-CLIENT-ID") != "cid" {
+				http.Error(w, "sem client id", http.StatusUnauthorized)
+				return
+			}
+			w.Write([]byte(`{"data":[{"node":{"id":7,"title":"Serie Exemplo","alternative_titles":{"en":"Example Series"},"start_date":"2018-07-01",
+				"mean":7.84,"num_episodes":2,"genres":[{"name":"Drama"}],"main_picture":{"medium":"https://img/m.jpg","large":"https://img/l.jpg"}}}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/":
+			w.Write([]byte(`{"data":{"Page":{"media":[{"idMal":0,"siteUrl":"https://anilist/1","title":{"romaji":"Sem MAL"}},
+				{"idMal":42,"siteUrl":"https://anilist/2","title":{"romaji":"Serie Exemplo"},"startDate":{"year":2020},"coverImage":{"large":"https://img/a.jpg"}}]}}}`))
 		case r.URL.Path == "/serie exemplo.json":
 			w.Write([]byte(`{"d":[{"id":"nm1","l":"Pessoa"},{"id":"tt123","l":"Serie Exemplo","y":2015,"q":"TV series","i":{"imageUrl":"https://img/i.jpg"}}]}`))
 		default:
@@ -202,9 +223,9 @@ func TestSearchMetaSources(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	pk, pt, pi := kitsuURL, tvmazeURL, imdbSuggURL
-	kitsuURL, tvmazeURL, imdbSuggURL = srv.URL, srv.URL, srv.URL
-	defer func() { kitsuURL, tvmazeURL, imdbSuggURL = pk, pt, pi }()
+	pk, pt, pi, pj, pa, pm := kitsuURL, tvmazeURL, imdbSuggURL, jikanURL, aniListURL, malAPIURL
+	kitsuURL, tvmazeURL, imdbSuggURL, jikanURL, aniListURL, malAPIURL = srv.URL, srv.URL, srv.URL, srv.URL+"/jikan", srv.URL+"/", srv.URL+"/mal"
+	defer func() { kitsuURL, tvmazeURL, imdbSuggURL, jikanURL, aniListURL, malAPIURL = pk, pt, pi, pj, pa, pm }()
 	ctx := context.Background()
 
 	k, err := SearchMeta(ctx, "kitsu", "anime", "Serie Exemplo")
@@ -220,7 +241,60 @@ func TestSearchMetaSources(t *testing.T) {
 	if err != nil || len(im) != 1 || im[0].URL != "https://www.imdb.com/title/tt123/" || im[0].Year != 2015 {
 		t.Fatalf("imdb: %+v %v", im, err)
 	}
+	// Jikan fora do ar: o MAL vem pelo AniList, só o que tem id no MAL
+	mal, err := SearchMeta(ctx, "mal", "anime", "Serie Exemplo")
+	if err != nil || len(mal) != 1 || mal[0].Source != "mal" || mal[0].URL != "https://myanimelist.net/anime/42" || mal[0].Cover != "https://img/a.jpg" {
+		t.Fatalf("mal pelo anilist: %+v %v", mal, err)
+	}
+	// com MAL_CLIENT_ID: a API oficial
+	t.Setenv("MAL_CLIENT_ID", "cid")
+	mal, err = SearchMeta(ctx, "mal", "anime", "Serie Exemplo")
+	if err != nil || len(mal) != 1 || mal[0].Title != "Example Series" || mal[0].URL != "https://myanimelist.net/anime/7" ||
+		mal[0].Score != 78 || mal[0].Year != 2018 || mal[0].Cover != "https://img/l.jpg" {
+		t.Fatalf("mal oficial: %+v %v", mal, err)
+	}
 	if _, err := SearchMeta(ctx, "nenhuma", "anime", "x"); err != errInvalid {
 		t.Fatalf("fonte inválida: %v", err)
+	}
+}
+
+func TestSeriesFolderBecomesSeries(t *testing.T) {
+	for _, p := range []string{"Series/Serie Sintetica/Serie.Sintetica.S01E01.mkv", "Séries/Serie Sintetica/T1/ep 01.mkv"} {
+		d, ok := deriveTopic(p)
+		if !ok || d.Kind != "series" || d.Title != "Serie Sintetica" {
+			t.Fatalf("%s: %+v %v", p, d, ok)
+		}
+	}
+	if _, ok := deriveTopic("Series/solto.mkv"); ok {
+		t.Fatal("arquivo solto na raiz virou série")
+	}
+}
+
+func TestFranchiseOrder(t *testing.T) {
+	fx := newLibFixture(t)
+	ctx := context.Background()
+	l := fx.l
+	a := fx.ids["Filmes/Filme Teste (2020).mp4"]
+	b := fx.ids["Animes/Serie Exemplo/[Grupo] Serie Exemplo - 01 [1080p].mkv"]
+	title := "Franquia Sintetica"
+	ref, err := l.CreateEntry(ctx, EntryInput{Cat: "franchises", Title: &title, AddIDs: []int64{a, b}}, "adm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.UpdateEntry(ctx, EntryInput{Ref: ref, Order: []int64{b, a}}, "adm"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := l.Franchises(ctx, l.viewerFor("u-admin"))
+	if err != nil || len(list) != 1 || list[0].Title != title || len(list[0].Items) != 2 || list[0].Items[0] != b || list[0].Items[1] != a {
+		t.Fatalf("franquias: %+v %v", list, err)
+	}
+	if e, err := l.FindEntry(ctx, ref); err != nil || e.Cat != "franchises" || e.Count != 2 {
+		t.Fatalf("entrada: %+v %v", e, err)
+	}
+	tv, _ := l.TVSeries(ctx, l.viewerFor("u-admin"))
+	for _, s := range tv {
+		if s.Title == title {
+			t.Fatal("franquia apareceu como série")
+		}
 	}
 }

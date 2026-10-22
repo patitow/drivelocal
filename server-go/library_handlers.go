@@ -38,11 +38,13 @@ func registerLibraryRoutes(protected *mux.Router) {
 	}
 	p := protected
 	p.HandleFunc("/catalog/items", h(libItemsHandler)).Methods("GET")
+	p.HandleFunc("/art/{file}", h(libArtFileHandler)).Methods("GET")
 	p.HandleFunc("/catalog/search", h(libSearchHandler)).Methods("GET")
 	p.HandleFunc("/catalog/home", h(libHomeHandler)).Methods("GET")
 	p.HandleFunc("/catalog/feed", h(libFeedHandler)).Methods("GET")
 	p.HandleFunc("/catalog/mangas", h(libMangasHandler)).Methods("GET")
 	p.HandleFunc("/catalog/tv-series", h(libTVSeriesHandler)).Methods("GET")
+	p.HandleFunc("/catalog/franchises", h(libFranchisesHandler)).Methods("GET")
 	p.HandleFunc("/catalog/facets", h(libFacetsHandler)).Methods("GET")
 	p.HandleFunc("/catalog/lookup", h(libLookupHandler)).Methods("GET")
 	p.HandleFunc("/catalog/items/{id:[0-9]+}", h(libItemHandler)).Methods("GET")
@@ -52,6 +54,7 @@ func registerLibraryRoutes(protected *mux.Router) {
 	p.HandleFunc("/tags", h(libTagsHandler)).Methods("GET")
 	p.HandleFunc("/topics", h(libTopicsHandler)).Methods("GET")
 	p.HandleFunc("/meta", h(libMetaHandler)).Methods("GET")
+	p.HandleFunc("/meta/art", h(libArtHandler)).Methods("GET")
 	p.HandleFunc("/topics/{id:[0-9]+}", h(libTopicHandler)).Methods("GET")
 	p.HandleFunc("/topics/{id:[0-9]+}/items", h(libTopicItemsHandler)).Methods("GET")
 	p.HandleFunc("/topics/{id:[0-9]+}/suggest", h(libTopicSuggestHandler)).Methods("POST")
@@ -78,6 +81,8 @@ func registerLibraryRoutes(protected *mux.Router) {
 	a := protected.PathPrefix("/admin/library").Subrouter()
 	a.Use(requireRole("admin"))
 	a.HandleFunc("/stats", h(libStatsHandler)).Methods("GET")
+	a.HandleFunc("/art", h(libArtStoreHandler)).Methods("POST")
+	a.HandleFunc("/art/frame", h(libArtFrameHandler)).Methods("GET")
 	a.HandleFunc("/policies", h(libPoliciesHandler)).Methods("GET", "PUT")
 	a.HandleFunc("/users", h(libUsersHandler)).Methods("GET")
 	a.HandleFunc("/users/{id}", h(libUserSetHandler)).Methods("PUT")
@@ -735,7 +740,7 @@ func libProgressHandler(l *Library, w http.ResponseWriter, r *http.Request) {
 }
 
 // /me/progress?path=... — usado pela ponte do player, que só conhece o caminho.
-// GET devolve {mediaId, progress, prefs}; PUT grava o progresso.
+// GET devolve {mediaId, progress, prefs, tracks}; PUT grava o progresso (e as faixas escolhidas).
 func libProgressByPathHandler(l *Library, w http.ResponseWriter, r *http.Request) {
 	v := l.viewer(r)
 	rel, ok := l.resolveVisible(v, decodeMediaPath(r.URL.Query().Get("path")))
@@ -767,7 +772,8 @@ func libProgressByPathHandler(l *Library, w http.ResponseWriter, r *http.Request
 		libFail(w, err)
 		return
 	}
-	libJSON(w, map[string]any{"mediaId": id, "progress": it.Progress, "favorite": it.Favorite, "prefs": l.GetPrefs(r.Context(), v.UserID)})
+	libJSON(w, map[string]any{"mediaId": id, "progress": it.Progress, "favorite": it.Favorite, "prefs": l.GetPrefs(r.Context(), v.UserID),
+		"tracks": l.TrackPrefs(r.Context(), v.UserID, id, rel)})
 }
 
 func libContinueHandler(l *Library, w http.ResponseWriter, r *http.Request) {

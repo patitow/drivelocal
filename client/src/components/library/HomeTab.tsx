@@ -9,6 +9,7 @@ import { library, formatDuration, type HomeShelf, type LibraryItem, type Playlis
 import { FavoriteButton, errorMessage, itemMeta, progressPct, useLoad, type OpenFn } from './catalogShared'
 import { HomeFeed } from './HomeFeed'
 import { PASTEL, Still, initial } from './shelves/shelfUi'
+import { WebImg, useArt } from './ExtMeta'
 
 // Altura fixa do card; a largura segue o aspecto real da miniatura.
 const CARD_H = 168
@@ -215,11 +216,13 @@ function CoverCard({ cover, root, title, subtitle, icon: Icon, onClick }: {
 // Série em destaque: pôster vertical com o progresso da temporada.
 function SeriesPoster({ t, onClick }: { t: TopicCard; onClick: () => void }) {
   const pct = t.count > 0 ? Math.round((t.watched / t.count) * 100) : 0
+  const art = useArt(`topic:${t.id}`)
   return (
     <div className="w-[132px] shrink-0 snap-start sm:w-[148px]">
       <button type="button" onClick={onClick} aria-label={`Abrir ${t.title}`}
         className="group relative block aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted outline-none ring-offset-2 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring">
-        {t.coverPath ? <Still path={t.coverPath} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.05]" />
+        {art?.cover ? <WebImg src={art.cover} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.05]" />
+          : t.coverPath ? <Still path={t.coverPath} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.05]" />
           : <span className="flex h-full w-full items-center justify-center"><Tags className="h-8 w-8 text-muted-foreground" /></span>}
         <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-2.5 pb-2.5 pt-10 text-left">
           <span className="line-clamp-3 text-sm font-semibold leading-tight text-white">{t.title}</span>

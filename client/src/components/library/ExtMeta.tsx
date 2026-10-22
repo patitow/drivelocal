@@ -4,7 +4,41 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { library, type ExtMeta } from '@/lib/library'
+import { library, type EntryArt, type ExtMeta } from '@/lib/library'
+
+const NO_ART: Record<string, EntryArt> = {}
+
+// Capa e banner que o admin pôs na ficha (uma consulta serve a estante toda).
+export function useArt(ref?: string): EntryArt | undefined {
+  const q = useQuery({ queryKey: ['entry-art'], queryFn: library.art, staleTime: 5 * 60_000, retry: false })
+  return ref ? (q.data ?? NO_ART)[ref] : undefined
+}
+
+// Imagem da fonte externa (CDN do AniList, IMDb...): sem referer e some se não carregar.
+export function WebImg({ src, className, alt = '', onFail }: { src?: string; className?: string; alt?: string; onFail?: () => void }) {
+  const [failed, setFailed] = useState('')
+  if (!src || failed === src) return null
+  return <img src={src} alt={alt} loading="lazy" decoding="async" draggable={false} referrerPolicy="no-referrer"
+    onError={() => { setFailed(src); onFail?.() }} className={className} />
+}
+
+// Moldura com a arte da ficha: o banner, ou a capa em pé sobre ela mesma desfocada.
+// Sem arte (ou se ela não carregar), o fallback: o still do vídeo.
+export function ArtFrame({ art, fallback }: { art?: EntryArt; fallback: React.ReactNode }) {
+  const [bad, setBad] = useState<string[]>([])
+  const banner = art?.banner && !bad.includes(art.banner) ? art.banner : ''
+  const cover = art?.cover && !bad.includes(art.cover) ? art.cover : ''
+  if (banner) return <WebImg src={banner} onFail={() => setBad((b) => [...b, banner])} className="h-full w-full object-cover" />
+  if (cover) {
+    return (
+      <span className="relative block h-full w-full overflow-hidden bg-black">
+        <WebImg src={cover} className="absolute inset-0 h-full w-full scale-125 object-cover opacity-60 blur-xl" />
+        <WebImg src={cover} onFail={() => setBad((b) => [...b, cover])} className="relative mx-auto block h-full w-auto object-contain" />
+      </span>
+    )
+  }
+  return <>{fallback}</>
+}
 
 // kind null com ref: só a ficha do cadastro, sem busca automática.
 export function useExtMeta(kind: 'anime' | 'manga' | 'movie' | null, title: string, ref?: string): ExtMeta | null {

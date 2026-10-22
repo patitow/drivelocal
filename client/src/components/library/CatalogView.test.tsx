@@ -22,7 +22,7 @@ function Colecao() {
 }
 
 let role = 'user'
-vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ role }) }))
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ role }), useAuthRole: () => role }))
 vi.mock('@/components/Thumbnail', () => ({ Thumbnail: () => <div data-testid="thumb" /> }))
 vi.mock('@/components/VideoPlayer', () => ({
   VideoPlayer: ({ file, files }: { file: { name: string }; files: unknown[] }) => <div data-testid="player">{file.name} de {files.length}</div>,
@@ -171,10 +171,12 @@ describe('CatalogView', () => {
     await waitFor(() => expect(lib.search).toHaveBeenCalledWith(expect.objectContaining({ topicId: 7 })))
   })
 
-  it('admin vê a aba Revisão', async () => {
+  it('admin vê o Gerenciar, com a Revisão e as Bibliotecas dentro', async () => {
     role = 'admin'
     render(<Colecao />)
-    expect(await screen.findByRole('tab', { name: /Revisão/ })).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole('tab', { name: /Gerenciar/ }))
+    const secs = await screen.findByRole('tablist', { name: 'Seções do Gerenciar' })
+    expect(within(secs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Cadastro', 'Revisão', 'Bibliotecas'])
   })
 
   it('favoritar alterna o coração', async () => {
@@ -227,7 +229,8 @@ describe('CatalogView', () => {
     adm.acceptTopicDupes.mockResolvedValue({ batchId: 'mnew', merged: 1 })
     adm.undoTopicMerge.mockResolvedValue({ restored: 1 })
     render(<Colecao />)
-    await userEvent.click(await screen.findByRole('tab', { name: /Revisão/ }))
+    await userEvent.click(await screen.findByRole('tab', { name: /Gerenciar/ }))
+    await userEvent.click(await screen.findByRole('tab', { name: 'Revisão' }))
     const group = await screen.findByTestId('dup-group')
     expect(group).toHaveTextContent('Autor Alfa')
     expect(group).toHaveTextContent('10 itens')

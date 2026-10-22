@@ -3,6 +3,7 @@
 // outro criador. Admin faz na hora, com desfazer; os demais usuários mandam a
 // sugestão de juntar/extinguir para a Revisão.
 import { useMemo, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import { Ban, GitMerge, MoreHorizontal, Pencil, Plus, Search, UserMinus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -22,8 +23,8 @@ const BTN_MAIN = 'h-10 rounded-full bg-foreground px-4 text-sm font-semibold tex
 // centered: no desktop fica no meio da tela (quando o botão está num cartão
 // pequeno, um painel ancorado nele seria cortado).
 function Panel({ label, title, onClose, centered, children }: { label: string; title: string; onClose: () => void; centered?: boolean; children: ReactNode }) {
-  return (
-    <div role="dialog" aria-label={label} onClick={(e) => e.stopPropagation()}
+  const panel = (
+    <div role="dialog" aria-label={label} aria-modal={centered || undefined} onClick={(e) => e.stopPropagation()}
       className={cn('fixed inset-x-3 bottom-3 z-50 space-y-3 rounded-xl border bg-popover p-4 text-left text-popover-foreground shadow-xl sm:inset-x-auto sm:bottom-auto sm:w-[360px]',
         centered ? 'sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2' : 'sm:absolute sm:right-0 sm:top-12 sm:z-20')}>
       <div className="flex items-center justify-between gap-2">
@@ -32,6 +33,13 @@ function Panel({ label, title, onClose, centered, children }: { label: string; t
       </div>
       {children}
     </div>
+  )
+  if (!centered) return panel
+  // centrado: fora do card (cada card tem seu z-index, e os botões dos
+  // vizinhos ficavam por cima), com um fundo que segura os cliques
+  return createPortal(
+    <div className="dark fixed inset-0 z-[100] bg-black/50" onClick={(e) => { e.stopPropagation(); onClose() }}>{panel}</div>,
+    document.body,
   )
 }
 

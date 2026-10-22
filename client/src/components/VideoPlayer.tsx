@@ -7,13 +7,13 @@ import { toast } from 'sonner'
 import { SERVER_RESTORED_EVENT } from '@/lib/reconnect'
 import { api } from '@/lib/api'
 import { parseVtt, type Cue } from '@/lib/vtt'
-import { audioLabel, defaultAudio, loadTrackPrefs, pickAudioByLang, pickSubtitleByLang, saveTrackPref, subtitleLabel } from '@/lib/tracks'
+import { audioLabel, defaultAudio, encodeAudioPref, loadTrackPrefs, pickAudioByLang, pickAudioByPref, pickSubtitleByLang, saveTrackPref, subtitleLabel } from '@/lib/tracks'
 import { buildPlaybackUrl, clientCaps, effectiveMode, initialMode, modeLabel, nextMode, silentFailure, streamBase } from '@/lib/playback'
 import { clampDelay, describeDelay, formatDelay, loadSync, saveSync, syncKey, SYNC_STEP_MS, type SyncDelays, type SyncKind } from '@/lib/sync'
 import { createAssRenderer, createPgsRenderer, type SubRenderer } from '@/lib/subRenderers'
 import type { AudioTrack, MediaInfo, PlaybackMode, SubtitleTrack } from '@/types'
 import { usePlaybackProgress } from '@/hooks/usePlaybackProgress'
-import { formatDuration, nextPlayableIndex } from '@/lib/library'
+import { formatDuration, nextPlayableIndex, type TrackChoice } from '@/lib/library'
 
 const VTT_ENTITIES: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&nbsp;': ' ', '&lrm;': '', '&rlm;': '' }
 
@@ -95,6 +95,12 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   // Fora do modo direct o servidor gera o stream a partir de `offset` e o tempo do <video> é relativo a ele.
   const [info, setInfo] = useState<MediaInfo | null>(null)
   const [infoReady, setInfoReady] = useState(false)
+  // faixas lembradas já aplicadas (o <video> só recebe src depois disso, para não carregar duas vezes)
+  const [tracksReady, setTracksReady] = useState(false)
+  // faixas escolhidas neste arquivo, gravadas junto com o progresso para valer nos próximos episódios
+  const trackChoiceRef = useRef<TrackChoice>({})
+  // última legenda ligada (tecla C religa a mesma)
+  const lastSubIdRef = useRef<string | null>(null)
   const [minMode, setMinMode] = useState<PlaybackMode>('direct')
   const [audioSel, setAudioSel] = useState<number | null>(null)
   const [offset, setOffset] = useState(0)
@@ -134,7 +140,14 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   const containerRef = useRef<HTMLDivElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
 
-  const streamUrl = buildStreamUrlSync(file.path)
+  // URL do stream com o token congelado: o token é renovado a cada poucos minutos e, se a URL do
+  // render mudasse junto, o <video> trocaria de src e voltaria ao começo do episódio. Só restartAt
+  // (seek, troca de faixa, retry após token expirado) pega um token novo.
+  const streamUrlRef = useRef({ path: '', url: '' })
+  if (streamUrlRef.current.path !== file.path) {
+    streamUrlRef.current = { path: file.path, url: buildStreamUrlSync(file.path) }
+  }
+  const streamUrl = streamUrlRef.current.url
   const mode = effectiveMode(minMode, audioSel, streamDelay)
   modeRef.current = mode
   const src = buildPlaybackUrl(streamUrl, mode, audioSel, offset, streamDelay)
@@ -202,6 +215,9 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     resumeRef.current = null
     setInfo(null)
     setInfoReady(false)
+    setTracksReady(false)
+    trackChoiceRef.current = {}
+    lastSubIdRef.current = null
     setAudioSel(null)
     setMinMode('direct')
     setOffset(0)
@@ -239,7 +255,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     silentCheckRef.current = { checked: false, startedAt: null }
   }, [src])
 
-  // Descobre as faixas do arquivo e aplica as preferências de idioma lembradas
+  // Descobre as faixas do arquivo (as preferências lembradas são aplicadas quando o progresso chega)
   useEffect(() => {
     let cancelled = false
     api.getMediaInfo(file.path, clientCaps())
@@ -251,15 +267,6 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
         const startMode = initialMode(mi)
         minModeRef.current = startMode
         setMinMode(startMode)
-        const prefs = loadTrackPrefs()
-        const nativeTrack = defaultAudio(mi)
-        const wanted = pickAudioByLang(mi, prefs.audio) ?? nativeTrack
-        if (wanted && !(wanted.order === nativeTrack?.order && wanted.playable)) {
-          audioSelRef.current = wanted.order
-          setAudioSel(wanted.order)
-        }
-        const sub = prefs.sub && prefs.sub !== 'off' ? pickSubtitleByLang(mi, prefs.sub) : undefined
-        if (sub) setSubId(sub.id)
       })
       .catch((e: { response?: { data?: { broken?: unknown } } }) => {
         // arquivo corrompido: o servidor diz o motivo; outros erros (sem ffprobe): toca o arquivo cru
@@ -362,9 +369,33 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     isPlayingRef.current = isPlaying
   }, [isPlaying])
 
+  // Aplica a dublagem/legenda lembradas: a última usada nesta série (servidor) e, sem ela, o
+  // último idioma escolhido neste navegador.
+  useEffect(() => {
+    if (!infoReady || !progress.ready || tracksReady) return
+    const mi = infoRef.current
+    if (mi) {
+      const local = loadTrackPrefs()
+      const series = progress.tracks
+      const native = defaultAudio(mi)
+      const remembered = pickAudioByPref(mi, series?.audio) ?? pickAudioByLang(mi, local.audio)
+      const wanted = remembered ?? native
+      if (wanted && !(wanted.order === native?.order && wanted.playable)) {
+        audioSelRef.current = wanted.order
+        setAudioSel(wanted.order)
+      }
+      if (remembered) trackChoiceRef.current.audioTrack = encodeAudioPref(remembered)
+      const subPref = series?.sub || local.sub
+      const sub = subPref && subPref !== 'off' ? pickSubtitleByLang(mi, subPref) : undefined
+      if (sub) setSubId(sub.id)
+      if (subPref) trackChoiceRef.current.subtitleTrack = sub ? subPref : 'off'
+    }
+    setTracksReady(true)
+  }, [infoReady, progress.ready, progress.tracks, tracksReady])
+
   // Retoma de onde o usuário parou (e dá play se veio do autoplay) assim que faixas e progresso chegaram
   useEffect(() => {
-    if (!infoReady || !progress.ready || resumeAppliedRef.current === file.path) return
+    if (!tracksReady || resumeAppliedRef.current === file.path) return
     resumeAppliedRef.current = file.path
     // autoplay: o próximo arquivo começa tocando (vale mesmo se o player for remontado)
     const play = autoplayPendingPath === file.path
@@ -386,7 +417,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     toast(`Retomando de ${formatDuration(t)}`, {
       action: { label: 'Do início', onClick: () => void restartRef.current(0, isPlayingRef.current || pendingPlayRef.current) },
     })
-  }, [infoReady, progress.ready, progress.resumeAt, file.path])
+  }, [tracksReady, progress.resumeAt, file.path])
 
   // Salva a posição a cada ~10 s tocando, ao pausar e ao trocar de arquivo/fechar
   useEffect(() => {
@@ -394,7 +425,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     // report deste arquivo: no cleanup progressRef já aponta para o próximo
     const report = progressRef.current.report
     const save = (force: boolean) => {
-      if (lastTimeRef.current > 0) report(lastTimeRef.current, durationRef.current, { force })
+      if (lastTimeRef.current > 0) report(lastTimeRef.current, durationRef.current, { force, tracks: trackChoiceRef.current })
     }
     const timer = setInterval(() => { if (isPlayingRef.current) save(false) }, 5000)
     const onPause = () => save(true)
@@ -600,12 +631,15 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     const video = videoRef.current
     if (!video) return
 
-    if (isPlaying) {
-      video.pause()
+    // estado lido do <video> (o atalho de teclado chama isto de um listener criado num render antigo)
+    if (video.paused && !pendingPlayRef.current) {
+      void video.play().catch(() => {})
+      setIsPlaying(true)
     } else {
-      video.play()
+      pendingPlayRef.current = false
+      video.pause()
+      setIsPlaying(false)
     }
-    setIsPlaying(!isPlaying)
   }
 
   const toggleMute = () => {
@@ -653,7 +687,8 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       if (seq !== seekSeqRef.current) return // outro seek chegou antes
     }
     // URL lida agora (não a do render): pega o token renovado
-    const newSrc = buildPlaybackUrl(buildStreamUrlSync(file.path), newMode, newAudio, start, newDelay)
+    streamUrlRef.current = { path: file.path, url: buildStreamUrlSync(file.path) }
+    const newSrc = buildPlaybackUrl(streamUrlRef.current.url, newMode, newAudio, start, newDelay)
     const newBase = streamBase(newMode, start, newDelay)
     // processado: sempre pula o silêncio inicial (streamLead); direct: só se não for o começo
     startAtRef.current = newMode !== 'direct' || t - newBase > 0.05 ? t - newBase : null
@@ -743,6 +778,13 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     const sel = native && track.order === native.order && track.playable ? null : track.order
     void restartAt(lastTimeRef.current, isPlayingRef.current, true, { audioSel: sel })
     saveTrackPref('audio', track.lang)
+    rememberTracks({ audioTrack: encodeAudioPref(track) })
+  }
+
+  // Grava a escolha de faixa na hora (vale para o próximo episódio mesmo fechando logo em seguida)
+  const rememberTracks = (choice: TrackChoice) => {
+    trackChoiceRef.current = { ...trackChoiceRef.current, ...choice }
+    progressRef.current.report(lastTimeRef.current, durationRef.current, { force: true, tracks: trackChoiceRef.current })
   }
 
   const showOsd = (text: string) => {
@@ -773,7 +815,32 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   const selectSubtitle = (track: SubtitleTrack | null) => {
     setMenu(null)
     setSubId(track ? track.id : null)
-    saveTrackPref('sub', track ? track.lang || 'off' : 'off')
+    const pref = track ? track.lang || 'off' : 'off'
+    saveTrackPref('sub', pref)
+    rememberTracks({ subtitleTrack: pref })
+  }
+
+  // Tecla C: desliga a legenda ou religa a última (sem ela, a do idioma preferido ou a primeira)
+  const toggleSubtitles = () => {
+    const mi = infoRef.current
+    if (!mi) return
+    if (subId) {
+      lastSubIdRef.current = subId
+      selectSubtitle(null)
+      showOsd('Legenda desligada')
+      return
+    }
+    const usable = mi.subtitles.filter((s) => s.supported)
+    const track = usable.find((s) => s.id === lastSubIdRef.current)
+      ?? pickSubtitleByLang(mi, loadTrackPrefs().sub)
+      ?? pickSubtitleByLang(mi, 'por')
+      ?? usable[0]
+    if (!track) {
+      showOsd('Sem legendas')
+      return
+    }
+    selectSubtitle(track)
+    showOsd(`Legenda: ${subtitleLabel(track)}`)
   }
 
   const toggleFullscreen = async () => {
@@ -884,28 +951,31 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     if (!showControls) setMenu(null)
   }, [showControls])
 
-  // Handle keyboard navigation
+  // Atalhos: lidos de um ref para o listener (criado uma vez) sempre chamar a versão atual
+  const keyActionsRef = useRef({ togglePlay, toggleMute, toggleFullscreen, toggleSubtitles })
+  keyActionsRef.current = { togglePlay, toggleMute, toggleFullscreen, toggleSubtitles }
+
+  // Teclado: espaço play-pause, F tela cheia, C legenda, M mudo, setas busca/volume, Esc fecha.
+  // Valem com o foco num botão do player (o espaço não "clica" o botão); só não valem digitando.
   useEffect(() => {
+    let swallowSpaceUp = false
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape always closes the modal, regardless of focus
       if (e.key === 'Escape') {
+        if (document.fullscreenElement) return // o navegador sai da tela cheia
         e.preventDefault()
         onClose()
         return
       }
-
-      // Check if focus is on video controls (input range, button, etc.)
-      const activeElement = document.activeElement
-      const isVideoControlFocused = activeElement?.tagName === 'INPUT' ||
-                                   activeElement?.tagName === 'BUTTON' ||
-                                   activeElement?.closest('button') !== null ||
-                                   activeElement?.closest('input[type="range"]') !== null ||
-                                   activeElement?.closest('[role="slider"]') !== null
+      const el = document.activeElement as HTMLElement | null
+      const typing = !!el && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' ||
+        (el.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes((el as HTMLInputElement).type)))
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return
 
       const video = videoRef.current
       if (!video) return
 
-      const sk = e.ctrlKey || e.metaKey || e.altKey ? null : syncKey(e.key)
+      const sk = syncKey(e.key)
       if (sk) {
         e.preventDefault()
         changeSyncRef.current(sk.kind, syncRef.current[sk.kind] + sk.dir * SYNC_STEP_MS)
@@ -913,58 +983,62 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
         return
       }
 
+      const act = keyActionsRef.current
       switch (e.key) {
-        case ' ': // Spacebar - play/pause
-          if (isVideoControlFocused) {
-            return
-          }
+        case ' ':
           e.preventDefault()
-          togglePlay()
-          showControlsTemporarily()
+          swallowSpaceUp = true
+          if (!e.repeat) act.togglePlay()
           break
-        case 'ArrowUp': // Increase volume
-          if (isVideoControlFocused) {
-            return
-          }
+        case 'f':
+        case 'F':
           e.preventDefault()
-          const newVolumeUp = Math.min(1, video.volume + 0.1)
-          video.volume = newVolumeUp
-          setVolume(newVolumeUp)
-          setIsMuted(false)
-          showControlsTemporarily()
+          if (!e.repeat) void act.toggleFullscreen()
           break
-        case 'ArrowDown': // Decrease volume
-          if (isVideoControlFocused) {
-            return
-          }
+        case 'c':
+        case 'C':
           e.preventDefault()
-          const newVolumeDown = Math.max(0, video.volume - 0.1)
-          video.volume = newVolumeDown
-          setVolume(newVolumeDown)
-          setIsMuted(newVolumeDown === 0)
-          showControlsTemporarily()
+          if (!e.repeat) act.toggleSubtitles()
           break
+        case 'm':
+        case 'M':
+          e.preventDefault()
+          if (!e.repeat) act.toggleMute()
+          break
+        case 'ArrowUp':
+        case 'ArrowDown': {
+          e.preventDefault()
+          const v = Math.min(1, Math.max(0, video.volume + (e.key === 'ArrowUp' ? 0.1 : -0.1)))
+          video.volume = v
+          video.muted = v === 0
+          setVolume(v)
+          setIsMuted(v === 0)
+          break
+        }
         case 'ArrowLeft':
-          if (isVideoControlFocused) {
-            return
-          }
-          e.preventDefault()
-          seekTo(lastTimeRef.current - 5)
-          showControlsTemporarily()
-          break
         case 'ArrowRight':
-          if (isVideoControlFocused) {
-            return
-          }
           e.preventDefault()
-          seekTo(lastTimeRef.current + 5)
-          showControlsTemporarily()
+          seekTo(lastTimeRef.current + (e.key === 'ArrowRight' ? 5 : -5))
           break
+        default:
+          return
+      }
+      showControlsTemporarily()
+    }
+    // botão focado dispara o clique no keyup do espaço: engole esse keyup
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ' && swallowSpaceUp) {
+        swallowSpaceUp = false
+        e.preventDefault()
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    document.addEventListener('keyup', handleKeyUp)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('keyup', handleKeyUp)
+    }
   }, [onClose, showControlsTemporarily, seekTo])
 
   return (
@@ -1097,7 +1171,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
             
             <video
               ref={videoRef}
-              src={infoReady && progress.ready && !broken ? src : undefined}
+              src={tracksReady && !broken ? src : undefined}
               data-playback-mode={mode}
               data-time-base={base}
               className="h-full w-full object-contain"
