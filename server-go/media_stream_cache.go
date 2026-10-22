@@ -398,6 +398,12 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 
 	f, err := os.Open(j.file)
 	if err != nil {
+		// arquivo já apagado (limpeza): tira o stream da tabela para o próximo pedido refazer
+		procMu.Lock()
+		if procJobs[j.key] == j {
+			procDrop(j)
+		}
+		procMu.Unlock()
 		http.Error(w, `{"error":"Failed to process media"}`, http.StatusInternalServerError)
 		return
 	}
@@ -412,6 +418,8 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 
 	end := int64(-1) // último byte a entregar (-1: até o ffmpeg terminar)
 	size, done, _ := j.state()
+	// ffmpeg morto no meio: o arquivo parcial não é o vídeo inteiro, então não informa o tamanho total
+	partial := done && j.isFailed()
 	if done {
 		end = size - 1
 	}
@@ -422,7 +430,7 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 			end = min(size, from+procChunk) - 1
 		}
 		total := "*"
-		if done {
+		if done && !partial {
 			total = strconv.FormatInt(size, 10)
 		}
 		h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", from, end, total))
