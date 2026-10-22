@@ -49,6 +49,8 @@ Folders full of `.mkv` files are not a library. DriveLocal scans them and turns 
 - **Duplicate detection** for series and creators with different spellings (token set ratio, Jaro-Winkler and containment), with merges that keep aliases and can be undone
 - **Rules, batch operations with dry-run, change history and undo** for everything that edits the catalog
 
+![How DriveLocal fits together](./docs/assets/architecture.png)
+
 ### Built for agents
 
 DriveLocal has **API tokens** and a CLI, `drivelocal-cli`. An AI agent (Claude Code, or any assistant with shell or MCP tools) can search the catalog, look up metadata, prepare a batch, run it as a dry-run, then apply or undo it. Bulk curation becomes a conversation instead of an afternoon of clicking.
@@ -57,7 +59,7 @@ DriveLocal has **API tokens** and a CLI, `drivelocal-cli`. An AI agent (Claude C
 export DRIVELOCAL_URL=http://localhost
 export DRIVELOCAL_TOKEN=dlt_...        # created by an admin: POST /api/admin/library/tokens
 
-drivelocal-cli search "korra"
+drivelocal-cli search "aurora"
 drivelocal-cli review --kind topic     # pending AI suggestions
 drivelocal-cli accept 812 813
 drivelocal-cli batch fixes.json --dry  # preview first
