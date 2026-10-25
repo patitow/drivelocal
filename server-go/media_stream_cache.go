@@ -420,18 +420,14 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 
 	end := int64(-1) // último byte a entregar (-1: até o ffmpeg terminar)
 	size, done, _ := j.state()
-	// ffmpeg morto no meio: o arquivo parcial não é o vídeo inteiro, então não informa o tamanho total
-	partial := done && j.isFailed()
-	if done {
+	// ffmpeg morto no meio: o arquivo parcial não é o vídeo inteiro. Vai como resposta aberta
+	// (sem tamanho) e a conexão cai no fim, senão o navegador tomaria o corte pelo fim do vídeo.
+	if done && !j.isFailed() {
 		end = size - 1
 	}
 	if ranged {
-		total := "*"
-		if done && !partial {
-			total = strconv.FormatInt(size, 10)
-		}
-		if done {
-			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", from, end, total))
+		if end >= 0 {
+			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, end, size))
 			h.Set("Content-Length", strconv.FormatInt(end-from+1, 10))
 		} else {
 			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", from, from+procOpenEnd-1))
@@ -483,9 +479,6 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 		if rerr != nil && rerr != io.EOF {
 			return
 		}
-	}
-	if partial {
-		panic(http.ErrAbortHandler)
 	}
 }
 

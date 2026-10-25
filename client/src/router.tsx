@@ -4,33 +4,22 @@
 //                       o que estiver aberto em ?serie= ?criador= ?obra= ...
 //   /drive/*            arquivos, na pasta do caminho
 //   /configuracoes
-// "/" volta para a última tela visitada.
+// "/" abre a Coleção.
 import { lazy } from 'react'
 import { createRootRoute, createRoute, createRouter, redirect, useParams } from '@tanstack/react-router'
 import { AppShell, SettingsView } from '@/components/AppShell'
 import { SHELVES } from '@/components/library/shelves/shelfUi'
 import { CATALOG_MORE, type CatalogTab } from '@/components/library/CatalogNav'
-import { LAST_KEY, parseCatalogSearch } from '@/lib/nav'
+import { parseCatalogSearch } from '@/lib/nav'
 import { encodeDriveUrl } from '@/lib/mediaPath'
 
 const FileBrowser = lazy(() => import('@/components/FileBrowser').then((m) => ({ default: m.FileBrowser })))
 const CatalogView = lazy(() => import('@/components/library/CatalogView').then((m) => ({ default: m.CatalogView })))
 
-const OLD_VIEW_KEY = 'drivelocal:view'
-
-// Última tela (salva pelo AppShell); migra o formato antigo {view, tab}.
-function lastLocation(): string {
-  try {
-    // links antigos: /?path=Pasta
-    const old = new URLSearchParams(window.location.search).get('path')
-    if (old) return encodeDriveUrl(old)
-    const last = localStorage.getItem(LAST_KEY)
-    if (last && last.startsWith('/') && !last.startsWith('//') && last !== '/') return last
-    const v = JSON.parse(localStorage.getItem(OLD_VIEW_KEY) || '{}')
-    if (v.view === 'catalog') return v.tab && v.tab !== 'home' ? `/colecao/${v.tab}` : '/colecao'
-    if (v.view === 'settings') return '/configuracoes'
-  } catch { /* sem armazenamento */ }
-  return '/drive'
+// Tela inicial: a Coleção; links antigos /?path=Pasta ainda abrem a pasta.
+function startLocation(): string {
+  const old = new URLSearchParams(window.location.search).get('path')
+  return old ? encodeDriveUrl(old) : '/colecao'
 }
 
 const TABS = new Set<string>([...SHELVES.map((s) => s.id), ...CATALOG_MORE.map((t) => t.id)])
@@ -41,7 +30,7 @@ const rootRoute = createRootRoute({ component: AppShell })
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  beforeLoad: () => { throw redirect({ href: lastLocation(), replace: true }) },
+  beforeLoad: () => { throw redirect({ href: startLocation(), replace: true }) },
 })
 
 const catalogRoute = createRoute({

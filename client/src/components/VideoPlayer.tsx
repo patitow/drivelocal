@@ -114,6 +114,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   // "Retomando de X" discreto dentro do player (o toast global cobria o vídeo no celular)
   const [resumeHint, setResumeHint] = useState<number | null>(null)
   const resumeHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const earlyEndRef = useRef(-1) // onde o último "ended" antes da hora foi retomado
   const syncRef = useRef(sync)
   const streamDelayRef = useRef(streamDelay)
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -240,6 +241,8 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     setStreamDelay(saved.audio)
     setOsd(null)
     setResumeHint(null)
+    if (resumeHintTimerRef.current) clearTimeout(resumeHintTimerRef.current)
+    earlyEndRef.current = -1
     if (audioDelayTimerRef.current) clearTimeout(audioDelayTimerRef.current)
     infoRef.current = null
     audioSelRef.current = null
@@ -255,6 +258,10 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   useEffect(() => { minModeRef.current = minMode }, [minMode])
   useEffect(() => { offsetRef.current = base }, [base])
   useEffect(() => { durationRef.current = duration }, [duration])
+  useEffect(() => () => {
+    if (resumeHintTimerRef.current) clearTimeout(resumeHintTimerRef.current)
+    if (osdTimerRef.current) clearTimeout(osdTimerRef.current)
+  }, [])
   // Trocou de stream: o <video> recomeça, então o estado de "já tocou" e a checagem de falha silenciosa também
   useEffect(() => {
     setHasStartedPlaying(false)
@@ -562,6 +569,14 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     }
 
     const handleEnded = () => {
+      // "ended" longe do fim conhecido é o stream que caiu, não o episódio acabando:
+      // retoma dali uma vez em vez de marcar como visto e oferecer o próximo
+      const at = lastTimeRef.current
+      if (durationRef.current > 0 && at < durationRef.current - 30 && Math.abs(at - earlyEndRef.current) > 5) {
+        earlyEndRef.current = at
+        void restartRef.current(at, true, true)
+        return
+      }
       setIsPlaying(false)
       const p = progressRef.current
       const dur = durationRef.current || video.duration || lastTimeRef.current
@@ -1261,7 +1276,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
             {resumeHint !== null && (
               <div
                 data-testid="resume-hint"
-                className="absolute left-3 top-14 z-20 flex items-center gap-2 rounded-full bg-black/70 py-1 pl-3 pr-1 text-xs text-white backdrop-blur sm:left-6 sm:text-sm"
+                className="absolute left-3 top-[calc(3.5rem+env(safe-area-inset-top))] z-20 flex items-center gap-2 rounded-full bg-black/70 py-1 pl-3 pr-1 text-xs text-white backdrop-blur sm:left-6 sm:text-sm"
               >
                 <span>Retomando de {formatDuration(resumeHint)}</span>
                 <button

@@ -10,7 +10,6 @@ import { RestrictedToggle } from '@/components/library/RestrictedToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAppStore } from '@/lib/store'
-import { LAST_KEY } from '@/lib/nav'
 import { encodeDriveUrl } from '@/lib/mediaPath'
 import { useTheme } from '@/hooks/useTheme'
 import { useIsCompactLayout } from '@/hooks/useMediaQuery'
@@ -66,11 +65,6 @@ export function AppShell() {
       setSidebarOpen(false)
     }
   }
-
-  // Recarregar ou abrir "/" volta para a última tela.
-  useEffect(() => {
-    try { localStorage.setItem(LAST_KEY, location.href) } catch { /* sem armazenamento */ }
-  }, [location.href])
 
   const goTo = (view: View) => {
     closeDrawerIfCompact()

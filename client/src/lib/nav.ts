@@ -3,9 +3,6 @@
 import { useCallback } from 'react'
 import { useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 
-// Última tela visitada: "/" volta para ela.
-export const LAST_KEY = 'drivelocal:last'
-
 export interface CatalogSearch {
   serie?: string // série aberta (SeriesGroup.key)
   criador?: number // perfil de criador (topic id)

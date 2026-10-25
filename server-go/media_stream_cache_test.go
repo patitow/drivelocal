@@ -137,8 +137,12 @@ func fakeProcJob(t *testing.T, key string, first []byte) (grow func([]byte), fin
 			t.Error(err)
 			return
 		}
-		f.Write(b)
+		_, err = f.Write(b)
 		f.Close()
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		j.mu.Lock()
 		j.size += int64(len(b))
 		j.notify()
@@ -164,7 +168,10 @@ func TestProcRangeWhileGeneratingFollowsToEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	grown := make(chan struct{})
+	defer func() { <-grown }() // o grow usa o t: termina antes do teste
 	go func() {
+		defer close(grown)
 		for off := 1 << 20; off < len(data); off += 1 << 20 {
 			time.Sleep(20 * time.Millisecond)
 			grow(data[off : off+1<<20])
@@ -212,3 +219,4 @@ func TestProcPartialStreamAbortsConnection(t *testing.T) {
 		t.Fatal("partial stream ended cleanly; the browser would take it as the end of the video")
 	}
 }
+

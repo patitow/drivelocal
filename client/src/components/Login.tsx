@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { useAuth } from '@/contexts/AuthContext'
 import { ForgotPassword } from './ForgotPassword'
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,7 @@ import type { LoginRequest } from '@/types'
 
 export function Login() {
   const { login, isLoading } = useAuth()
+  const navigate = useNavigate()
   const [credentials, setCredentials] = useState<LoginRequest>({
     username: '',
     password: '',
@@ -33,7 +35,10 @@ export function Login() {
     const success = await login(credentials)
     if (!success) {
       setError('Credenciais inválidas. Tente novamente.')
+      return
     }
+    // depois de entrar, começa sempre pela Coleção
+    void navigate({ to: '/colecao', replace: true })
   }
 
   return (
