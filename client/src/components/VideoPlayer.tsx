@@ -13,7 +13,20 @@ import { clampDelay, describeDelay, formatDelay, loadSync, saveSync, syncKey, SY
 import { createAssRenderer, createPgsRenderer, type SubRenderer } from '@/lib/subRenderers'
 import type { AudioTrack, MediaInfo, PlaybackMode, SubtitleTrack } from '@/types'
 import { usePlaybackProgress } from '@/hooks/usePlaybackProgress'
+import { useReleasingMediaRef } from '@/hooks/useReleasingMediaRef'
 import { formatDuration, nextPlayableIndex, type TrackChoice } from '@/lib/library'
+
+// APIs de tela cheia com prefixo (Safari, Firefox antigo, IE/Edge)
+type VendorFullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void
+  mozRequestFullScreen?: () => Promise<void> | void
+  msRequestFullscreen?: () => Promise<void> | void
+}
+type VendorFullscreenDocument = Document & {
+  webkitExitFullscreen?: () => Promise<void> | void
+  mozCancelFullScreen?: () => Promise<void> | void
+  msExitFullscreen?: () => Promise<void> | void
+}
 
 const VTT_ENTITIES: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&nbsp;': ' ', '&lrm;': '', '&rlm;': '' }
 
@@ -143,6 +156,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   const scrubValueRef = useRef(0)
 
   const videoRef = useRef<HTMLVideoElement>(null)
+  const videoElRef = useReleasingMediaRef(videoRef)
   const containerRef = useRef<HTMLDivElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
 
@@ -531,7 +545,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       // sem imagem e sem erro (ex.: mpeg4/wmv no Chrome): tenta o próximo modo
       if (modeRef.current !== 'transcode' && silentFailure(infoRef.current, { videoWidth: video.videoWidth, playedSeconds: 0 })) {
         silentCheckRef.current.checked = true
-        void fallbackRef.current('sem vídeo')
+        void fallbackRef.current('sem vídeo', true)
         return
       }
       if (startAtRef.current !== null) {
@@ -564,7 +578,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       if (played < 1.5) return
       check.checked = true
       if (silentFailure(infoRef.current, { videoWidth: video.videoWidth, audioBytes, playedSeconds: played }) === 'no-audio') {
-        void fallbackRef.current('sem áudio')
+        void fallbackRef.current('sem áudio', true)
       }
     }
 
@@ -751,13 +765,14 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
 
   // Falhou no modo atual (erro ou falha silenciosa): sobe um degrau direct → remux → transcode.
   // Antes confere se o servidor está de pé; se não, é queda de conexão e o reconnect retoma depois.
-  const fallback = async (why: string) => {
+  // decodeFailure: o stream chegou mas o navegador não decodifica (sem som/imagem), então o token não tem culpa.
+  const fallback = async (why: string, decodeFailure = false) => {
     const next = nextMode(modeRef.current)
     const resume = { time: lastTimeRef.current, wasPlaying: isPlayingRef.current || pendingPlayRef.current }
     const serverUp = await api.getHealth().then(() => true, () => false)
     // O token vai na URL do <video> e não passa pelo refresh do axios: se expirou,
     // renova uma vez e recarrega no mesmo modo antes de descer de degrau.
-    if (serverUp && !authRetriedRef.current) {
+    if (serverUp && !decodeFailure && !authRetriedRef.current) {
       authRetriedRef.current = true
       const path = file.path
       const refreshed = await api.refreshToken().catch(() => false)
@@ -893,27 +908,19 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
           // Try standard API first
           if (element.requestFullscreen) {
             await element.requestFullscreen()
-          } else if ((element as any).webkitRequestFullscreen) {
-            // Safari
-            await (element as any).webkitRequestFullscreen()
-          } else if ((element as any).mozRequestFullScreen) {
-            // Firefox
-            await (element as any).mozRequestFullScreen()
-          } else if ((element as any).msRequestFullscreen) {
-            // IE/Edge
-            await (element as any).msRequestFullscreen()
+          } else {
+            const el = element as VendorFullscreenElement
+            // Safari, Firefox antigo, IE/Edge
+            await (el.webkitRequestFullscreen ?? el.mozRequestFullScreen ?? el.msRequestFullscreen)?.call(el)
           }
         }
       } else {
         // Exit fullscreen
         if (document.exitFullscreen) {
           await document.exitFullscreen()
-        } else if ((document as any).webkitExitFullscreen) {
-          await (document as any).webkitExitFullscreen()
-        } else if ((document as any).mozCancelFullScreen) {
-          await (document as any).mozCancelFullScreen()
-        } else if ((document as any).msExitFullscreen) {
-          await (document as any).msExitFullscreen()
+        } else {
+          const doc = document as VendorFullscreenDocument
+          await (doc.webkitExitFullscreen ?? doc.mozCancelFullScreen ?? doc.msExitFullscreen)?.call(doc)
         }
       }
     } catch (error) {
@@ -1086,6 +1093,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     <div
       ref={containerRef}
       className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-black/90"
+      role="presentation" // teclado: atalhos globais no document (Esc fecha)
       onClick={handleBackdropClick}
       onTouchStart={(e) => {
         showControlsTemporarily()
@@ -1140,6 +1148,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       <div
         ref={videoContainerRef}
         className="relative flex flex-1 items-center justify-center overflow-hidden"
+        role="presentation"
         onClick={handleBackdropClick}
       >
             {/* Navigation Buttons - Only show when controls are visible */}
@@ -1210,8 +1219,10 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               </div>
             )}
             
+            {/* legendas são desenhadas pelo player (VTT/ASS/PGS), não por <track> */}
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
             <video
-              ref={videoRef}
+              ref={videoElRef}
               src={tracksReady && !broken ? src : undefined}
               data-playback-mode={mode}
               data-time-base={base}
@@ -1325,6 +1336,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
                 isLoading || !showControls ? 'opacity-0 pointer-events-none' : 'opacity-100'
               }`}
               style={videoBox ? { left: videoBox.left, width: videoBox.width } : { left: 0, right: 0 }}
+              role="presentation"
               onMouseMove={showControlsTemporarily}
               onClick={(e) => e.stopPropagation()}
             >

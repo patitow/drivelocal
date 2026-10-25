@@ -83,10 +83,11 @@ const MATRIX = [
   { name: 'remux_h264_aac.m2ts', mode: 'remux' }, // MPEG-TS (Blu-ray) não abre no <video>
   { name: 'transcode_mpeg4_mp3.avi', mode: 'transcode' }, // MPEG-4 Part 2 sem imagem no Chrome
   { name: 'transcode_hevc10_eac3.mkv', mode: 'remux' }, // HEVC 10 ok aqui; só o E-AC-3 precisa de remux
+  { name: 'direct_h264_noaudio.mp4', mode: 'direct', silent: true }, // sem faixa de áudio: toca só a imagem
 ]
 
 for (const fx of MATRIX) {
-  test(`toca ${fx.name} em modo ${fx.mode} com imagem e som`, async ({ page }) => {
+  test(`toca ${fx.name} em modo ${fx.mode} com imagem${fx.silent ? '' : ' e som'}`, async ({ page }) => {
     await openVideo(page, fx.name)
     await expect.poll(async () => (await videoState(page)).mode).toBe(fx.mode)
     await play(page)
@@ -94,7 +95,8 @@ for (const fx of MATRIX) {
     const s = await videoState(page)
     expect(s.err).toBeNull()
     expect(s.w).toBeGreaterThan(0)
-    expect(s.audioBytes).toBeGreaterThan(0)
+    if (!fx.silent) expect(s.audioBytes).toBeGreaterThan(0)
+    await expect(page.getByText('Este vídeo não pôde ser reproduzido')).toHaveCount(0)
   })
 }
 

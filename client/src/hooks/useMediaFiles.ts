@@ -16,10 +16,7 @@ export function useMediaFiles(path: string = '') {
   return useQuery({
     queryKey: mediaKeys.files(path),
     queryFn: async (): Promise<DirectoryInfo> => {
-      const response = await api.get<DirectoryInfo>('/api/files', {
-        params: { path: path.replace(/\\/g, '/') }
-      })
-      return response
+      return api.getFiles(path)
     },
     staleTime: 30 * 1000, // 30 seconds
     gcTime: 5 * 60 * 1000, // 5 minutes
@@ -91,9 +88,7 @@ export function useFilteredFiles(path: string = '', filters?: {
   return useQuery({
     queryKey: [...mediaKeys.files(path), filters],
     queryFn: async (): Promise<MediaFile[]> => {
-      const response = await api.get<DirectoryInfo>('/api/files', {
-        params: { path: path.replace(/\\/g, '/') }
-      })
+      const response = await api.getFiles(path)
       
       let files = response.items
       

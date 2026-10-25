@@ -40,6 +40,26 @@ func TestValidatePath(t *testing.T) {
 			path:    "folder\\subfolder",
 			wantErr: false, // Backslashes are normalized
 		},
+		{
+			name:    "reticências no nome da pasta",
+			path:    "Animes/Espera... Volta/ep 01.mkv",
+			wantErr: false,
+		},
+		{
+			name:    "traversal no meio",
+			path:    "Animes/../../etc/passwd",
+			wantErr: true,
+		},
+		{
+			name:    "traversal com barra invertida",
+			path:    "Animes\\..\\..\\segredo",
+			wantErr: true,
+		},
+		{
+			name:    "só ..",
+			path:    "..",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

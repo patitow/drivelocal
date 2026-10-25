@@ -8,6 +8,7 @@ import { buildStreamUrlSync, buildThumbnailUrlSync, cn } from '@/lib/utils'
 import { library, formatDuration, type FeedItem, type FeedScope, type TopicMini } from '@/lib/library'
 import { errorMessage, progressPct, type OpenFn } from './catalogShared'
 import { defaultAspect, useHoverPreview } from './HomeTab'
+import { useReleasingMediaRef } from '@/hooks/useReleasingMediaRef'
 
 const SCOPES: Array<{ id: FeedScope; label: string }> = [
   { id: 'all', label: 'Tudo' }, { id: 'series', label: 'Animes' }, { id: 'creators', label: 'Criadores' }, { id: 'films', label: 'Filmes e Séries' },
@@ -227,6 +228,7 @@ function FeedCard({ item, onOpen, onTopic }: { item: FeedItem; onOpen: () => voi
   const [aspect, setAspect] = useState(() => aspects.get(item.id) ?? defaultAspect(item))
   const [failed, setFailed] = useState(false)
   const preview = useHoverPreview(item.kind === 'video')
+  const previewRef = useReleasingMediaRef()
   const title = item.title || item.name
   const accent = accentOf(item)
   const r = REASON[item.reasonKind] ?? REASON.discover
@@ -247,7 +249,7 @@ function FeedCard({ item, onOpen, onTopic }: { item: FeedItem; onOpen: () => voi
             className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]" />
         )}
         {preview.show && (
-          <video src={`${buildStreamUrlSync(item.path)}#t=${Math.floor(startAt)}`} muted autoPlay playsInline loop preload="metadata"
+          <video ref={previewRef} src={`${buildStreamUrlSync(item.path)}#t=${Math.floor(startAt)}`} muted autoPlay playsInline loop preload="metadata"
             className="absolute inset-0 h-full w-full object-cover" />
         )}
         <span className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/60 to-transparent" />

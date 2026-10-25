@@ -68,9 +68,15 @@ func validatePath(path string) error {
 	if !utf8.ValidString(path) {
 		return &ValidationError{Message: ErrPathInvalid}
 	}
-	// Check for path traversal attempts (basic check, main validation is in handlers)
-	if strings.Contains(path, "..") || strings.Contains(path, "\x00") {
+	// Check for path traversal attempts (basic check, main validation is in handlers).
+	// Só o segmento ".." inteiro: "Espera... Volta" é nome de pasta válido.
+	if strings.Contains(path, "\x00") {
 		return &ValidationError{Message: ErrPathInvalid}
+	}
+	for _, seg := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return &ValidationError{Message: ErrPathInvalid}
+		}
 	}
 	return nil
 }

@@ -9,7 +9,7 @@ const WORK = process.env.MEDIA_E2E_DIR || path.join(os.tmpdir(), 'drivelocal-med
 
 module.exports = defineConfig({
   testDir: './tests',
-  testMatch: ['media-playback.spec.js', 'media-sync.spec.js'],
+  testMatch: ['media-playback.spec.js', 'media-sync.spec.js', 'console-clean.spec.js', 'media-release.spec.js'],
   globalSetup: require.resolve('./tests/media-e2e.setup.js'),
   // o servidor limita transcodes simultâneos: um teste por vez
   workers: 1,

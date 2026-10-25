@@ -225,6 +225,7 @@ var e2eFixtures = []fxSpec{
 	{name: "transcode_hevc10_eac3.mkv", video: "libx265", vopts: []string{"-pix_fmt", "yuv420p10le", "-x265-params", "log-level=error:keyint=48"}, audio: []string{"eac3", "aac"}, subs: []string{"ass"}, font: true, dur: 30},
 	{name: "remux_h264_ac3only.mkv", video: "libx264", vopts: []string{"-g", "48"}, audio: []string{"ac3"}, dur: 20},
 	{name: "remux_h264_aac.m2ts", video: "libx264", vopts: []string{"-g", "48"}, audio: []string{"aac"}, dur: 30},
+	{name: "direct_h264_noaudio.mp4", video: "libx264", vopts: []string{"-g", "48"}, dur: 20}, // clipe sem faixa de áudio
 }
 
 // TestWriteE2EFixtures só roda com E2E_FIXTURES_DIR (chamado pelo setup do Playwright).

@@ -12,6 +12,7 @@ import { buildStreamUrlSync } from '@/lib/utils'
 import { library, formatDuration, type LibraryItem } from '@/lib/library'
 import { errorMessage } from './catalogShared'
 import { Still } from './shelves/shelfUi'
+import { useReleasingMediaRef } from '@/hooks/useReleasingMediaRef'
 
 // recorte em frações da imagem (0 a 1)
 export interface Crop { x: number; y: number; w: number; h: number }
@@ -82,6 +83,7 @@ function Cropper({ it, label, aspect, onDone }: { it: LibraryItem; label: string
   const isVideo = it.kind === 'video'
   const img = useRef<HTMLImageElement>(null)
   const vid = useRef<HTMLVideoElement>(null)
+  const vidElRef = useReleasingMediaRef(vid)
   const box = useRef<HTMLDivElement>(null)
   const [media, setMedia] = useState<{ w: number; h: number } | null>(null)
   const [crop, setCrop] = useState<Crop | null>(null)
@@ -176,7 +178,7 @@ function Cropper({ it, label, aspect, onDone }: { it: LibraryItem; label: string
           {!isVideo && <img ref={img} src={src} alt={it.name} draggable={false} className={mediaCls}
             onLoad={(e) => ready(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)}
             onError={() => toast.error('Não deu para abrir a imagem')} />}
-          {isVideo && !fallback && <video ref={vid} src={src} muted playsInline preload="metadata" className={mediaCls}
+          {isVideo && !fallback && <video ref={vidElRef} src={src} muted playsInline preload="metadata" className={mediaCls}
             onLoadedMetadata={(e) => { ready(e.currentTarget.videoWidth, e.currentTarget.videoHeight); if (e.currentTarget.duration) setDur(e.currentTarget.duration); e.currentTarget.currentTime = (it.durationS ?? e.currentTarget.duration ?? 0) * 0.25 }}
             onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
             onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}

@@ -3,6 +3,8 @@ import type { ApiResponse, HealthResponse, NetworkInfo, DirectoryInfo, LoginRequ
 import { encodeMediaPath } from '@/lib/mediaPath'
 import { SERVER_UNAVAILABLE_EVENT, isServerUnavailableError } from '@/lib/reconnect'
 
+type DirectoryPage = DirectoryInfo & { pagination?: { hasMore: boolean } }
+
 // Use port 80 in production (same as frontend), 3000/5000 in development
 const getApiBaseUrl = () => {
   if (import.meta.env.VITE_API_URL) {
@@ -192,12 +194,17 @@ class ApiClient {
     return response.data
   }
 
-  // Get files
+  // Lista a pasta inteira: o servidor pagina (100 por padrão), então busca as páginas até o fim
   async getFiles(path: string = ''): Promise<DirectoryInfo> {
-    const response = await this.client.get<DirectoryInfo>('/api/files', {
-      params: { path: path.replace(/\\/g, '/') }
-    })
-    return response.data
+    const params = { path: path.replace(/\\/g, '/'), limit: 1000 }
+    let page = (await this.client.get<DirectoryPage>('/api/files', { params })).data
+    const items = [...(page.items ?? [])]
+    while (page.pagination?.hasMore && items.length > 0) {
+      page = (await this.client.get<DirectoryPage>('/api/files', { params: { ...params, offset: items.length } })).data
+      if (!page.items?.length) break
+      items.push(...page.items)
+    }
+    return { currentPath: page.currentPath, items }
   }
 
   // Generic get method

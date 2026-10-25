@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { ChevronLeft, ChevronRight, ListPlus, ListVideo, Play, Tags, Video, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { buildStreamUrlSync, buildThumbnailUrlSync, cn } from '@/lib/utils'
+import { useReleasingMediaRef } from '@/hooks/useReleasingMediaRef'
 import { library, formatDuration, type HomeShelf, type LibraryItem, type Playlist, type PlaylistCard, type TopicCard, type TopicMini } from '@/lib/library'
 import { FavoriteButton, errorMessage, itemMeta, progressPct, useLoad, type OpenFn } from './catalogShared'
 import { HomeFeed } from './HomeFeed'
@@ -105,6 +106,7 @@ function PlaylistPicker({ item, onClose }: { item: LibraryItem; onClose: () => v
 function ShelfItemCard({ item, onOpen, onDismiss }: { item: LibraryItem; onOpen: () => void; onDismiss?: () => void }) {
   const { width, onLoad } = useAspect(defaultAspect(item))
   const preview = useHoverPreview(item.kind === 'video')
+  const previewRef = useReleasingMediaRef()
   const [picking, setPicking] = useState(false)
   const pct = progressPct(item)
   const title = item.title || item.name
@@ -127,6 +129,7 @@ function ShelfItemCard({ item, onOpen, onDismiss }: { item: LibraryItem; onOpen:
         <Thumb path={item.path} onLoad={onLoad} alt="" />
         {preview.show && (
           <video
+            ref={previewRef}
             src={`${buildStreamUrlSync(item.path)}#t=${Math.floor(startAt)}`}
             muted
             autoPlay
@@ -283,6 +286,7 @@ function HeroSlide({ items, idx, setIdx, setHold, reduced, onOpen }: {
   items: LibraryItem[]; idx: number; setIdx: (i: number) => void; setHold: (v: boolean) => void; reduced: boolean; onOpen: OpenFn
 }) {
   const [playing, setPlaying] = useState(false)
+  const previewRef = useReleasingMediaRef()
   const item = items[idx]
   const { width, onLoad } = useAspect(defaultAspect(item))
   const title = item.title || item.name
@@ -356,6 +360,7 @@ function HeroSlide({ items, idx, setIdx, setHold, reduced, onOpen }: {
           <img src={buildThumbnailUrlSync(item.path)} alt="" draggable={false} onLoad={onLoad} className="h-full w-full object-cover" />
           {playing && (
             <video
+              ref={previewRef}
               src={`${buildStreamUrlSync(item.path)}#t=${Math.floor(startAt)}`}
               muted
               autoPlay
