@@ -46,9 +46,11 @@ export function ArtCropModal({ label, items, aspect, onDone, onClose }: {
   }, [onClose])
 
   return createPortal(
-    <div className="dark fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={`${label} dos itens`} onClick={(e) => e.stopPropagation()}
-        className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border bg-popover text-popover-foreground shadow-2xl">
+    <div className="dark fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
+      {/* clicar fora fecha; pelo teclado, Esc ou o botão Fechar */}
+      <button type="button" aria-hidden="true" tabIndex={-1} data-testid="art-crop-backdrop" onClick={onClose} className="absolute inset-0 cursor-default" />
+      <div role="dialog" aria-modal="true" aria-label={`${label} dos itens`}
+        className="relative flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border bg-popover text-popover-foreground shadow-2xl">
         <header className="flex items-center gap-2 border-b px-4 py-3">
           {it && <button type="button" aria-label="Voltar aos itens" onClick={() => setIt(null)} className="rounded-full p-1.5 hover:bg-secondary"><ArrowLeft className="h-4 w-4" /></button>}
           <h3 className="min-w-0 flex-1 truncate font-semibold">{it ? it.name : `${label}: escolha um item`}</h3>

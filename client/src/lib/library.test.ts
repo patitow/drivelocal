@@ -98,4 +98,25 @@ describe('segunda barreira do conteúdo explícito', () => {
     await library.setRestrictedMode(false)
     expect((await library.home()).shelves[0].items?.map((i) => i.id)).toEqual([1])
   })
+
+  it('cards de tópico explícitos saem da home, da lista de tópicos e das séries', async () => {
+    const card = (id: number, maturity?: string) => ({ id, title: `t${id}`, coverPath: `c/${id}.jpg`, maturity })
+    request.mockImplementation((cfg?: { url?: string }) => Promise.resolve({
+      data: {
+        '/api/me/prefs': { restrictedAllowed: true, restrictedMode: false },
+        '/api/catalog/home': { shelves: [
+          { id: 'series', kind: 'topics', topics: [card(1, 'geral'), card(2, 'explicito')] },
+          { id: 'creators', kind: 'topics', topics: [card(3, 'explicito')] },
+        ] },
+        '/api/topics': { topics: [card(4, 'explicito'), card(5)], total: 2 },
+        '/api/catalog/tv-series': { series: [card(6, 'explicito'), card(7, 'sugestivo')] },
+      }[cfg?.url ?? ''],
+    }))
+    await library.prefs()
+    const h = await library.home()
+    expect(h.shelves.map((s) => s.id)).toEqual(['series'])
+    expect(h.shelves[0].topics?.map((t) => t.id)).toEqual([1])
+    expect((await library.topics()).topics.map((t) => t.id)).toEqual([5])
+    expect((await library.tvSeries()).map((t) => t.id)).toEqual([7])
+  })
 })

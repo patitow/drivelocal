@@ -240,6 +240,7 @@ type TopicInfo struct {
 	Aliases     []string `json:"aliases"`
 	Recent      []string `json:"recent,omitempty"` // até 3 itens mais novos (só na listagem)
 	Latest      int64    `json:"latest,omitempty"` // mtime do item mais novo
+	Maturity    string   `json:"maturity,omitempty"` // a maior entre capa e recentes: o que o card mostra
 }
 
 type TopicQuery struct {
@@ -337,6 +338,22 @@ func (l *Library) ListTopics(ctx context.Context, v Viewer, tq TopicQuery) ([]To
 				}
 			}
 			rows.Close()
+		}
+		var shown []string
+		for _, t := range out {
+			shown = append(append(shown, t.CoverPath), t.Recent...)
+		}
+		mat := l.maturityOfPaths(ctx, shown)
+		for i := range out {
+			top, seen := 0, false
+			for _, p := range append([]string{out[i].CoverPath}, out[i].Recent...) {
+				if m, ok := mat[p]; ok {
+					top, seen = max(top, m), true
+				}
+			}
+			if seen {
+				out[i].Maturity = maturityName(top)
+			}
 		}
 	}
 	return out, total, nil

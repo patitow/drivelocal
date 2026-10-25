@@ -79,6 +79,7 @@ export interface TopicInfo {
   aliases: string[]
   recent?: string[] // até 3 itens mais novos
   latest?: number // mtime do item mais novo
+  maturity?: Maturity // a maior entre capa e recentes
 }
 export interface MangaChapter { dir: string; title: string; pages: number; cover: string }
 export interface MangaWork { dir: string; title: string; author?: string; cover: string; pages: number; mtime: number; chapters: MangaChapter[] }
@@ -115,7 +116,7 @@ export interface SeriesGroup {
 }
 export interface SearchGroup { type: 'series' | 'item'; item?: LibraryItem; series?: SeriesGroup }
 export interface GroupedSearch { total: number; groups: SearchGroup[]; truncated: boolean }
-export interface TopicCard { id: number; kind: string; title: string; count: number; watched: number; coverPath: string }
+export interface TopicCard { id: number; kind: string; title: string; count: number; watched: number; coverPath: string; maturity?: Maturity }
 export interface PlaylistCard extends Playlist { coverPath?: string }
 export interface HomeShelf {
   id: string
@@ -250,7 +251,7 @@ export const library = {
     call<{ item: LibraryItem }>('POST', `/api/catalog/items/${id}/tags`, { add, remove }),
   tags: (q = '') => call<{ tags: TagInfo[] }>('GET', '/api/tags', undefined, q ? { q } : undefined).then((r) => r.tags ?? []),
   topics: (params: { kind?: string; q?: string; favorites?: boolean; limit?: number } = {}) =>
-    call<{ topics: TopicInfo[]; total: number }>('GET', '/api/topics', undefined, itemQueryParams(params as ItemQuery)),
+    view(call<{ topics: TopicInfo[]; total: number }>('GET', '/api/topics', undefined, itemQueryParams(params as ItemQuery))),
   topicItems: (id: number) => view(call<ItemPage>('GET', `/api/topics/${id}/items`, undefined, { limit: '500' })),
   favorite: (id: number, on: boolean) => call<{ favorite: boolean }>(on ? 'PUT' : 'DELETE', `/api/me/favorites/${id}`),
   // quem não é admin: sugere juntar (into) ou tirar dos criadores; vai para a Revisão
@@ -260,9 +261,13 @@ export const library = {
   hide: (id: number, on: boolean) => call<{ hidden: boolean }>(on ? 'PUT' : 'DELETE', `/api/me/hidden/${id}`),
   search: (q: ItemQuery) =>
     view(call<GroupedSearch>('GET', '/api/catalog/search', undefined, { ...itemQueryParams(q), group: 'series' })),
-  // estante de itens que ficou vazia pelo filtro sai junto
-  home: () => view(call<HomeData>('GET', '/api/catalog/home')).then((d) => ({ ...d, shelves: d.shelves.filter((s) => s.kind !== 'items' || (s.items?.length ?? 0) > 0) })),
-  tvSeries: () => call<{ series: TopicCard[] }>('GET', '/api/catalog/tv-series').then((r) => r.series),
+  home: () =>
+    view(call<HomeData>('GET', '/api/catalog/home')).then((d) => ({
+      ...d,
+      // estante que ficou vazia pelo filtro sai junto
+      shelves: d.shelves.filter((s) => s.kind === 'playlists' || (s.kind === 'items' ? s.items : s.topics)?.length !== 0),
+    })),
+  tvSeries: () => view(call<{ series: TopicCard[] }>('GET', '/api/catalog/tv-series')).then((r) => r.series),
   franchises: () => call<{ franchises: FranchiseInfo[] }>('GET', '/api/catalog/franchises').then((r) => r.franchises ?? []),
   feed: (scope: FeedScope, seed: number, offset: number, limit = 24) =>
     view(call<FeedPage>('GET', '/api/catalog/feed', undefined, { scope, seed: String(seed), offset: String(offset), limit: String(limit) })),

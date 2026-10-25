@@ -244,3 +244,33 @@ func TestHomeNotCachedByBrowser(t *testing.T) {
 		t.Errorf("Cache-Control = %q, quer no-store", got)
 	}
 }
+
+// Cards de tópico levam a classificação do que mostram (capa e itens recentes): o cliente usa isso como
+// segunda barreira para tirar o explícito de uma resposta velha quando o modo está desligado.
+func TestTopicCardsCarryMaturity(t *testing.T) {
+	fx := newLibFixture(t)
+	ctx := context.Background()
+	all := Viewer{UserID: "u-admin", IsAdmin: true, MaxMaturity: MaturityExplicito}
+	want := map[string]string{"Serie Exemplo": "geral", "Titulo Restrito": "explicito"}
+
+	infos, _, err := fx.l.ListTopics(ctx, all, TopicQuery{Kind: "series"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cards, err := fx.l.topTopics(ctx, all, "series", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][2]string{}
+	for _, tp := range infos {
+		got[tp.Title] = [2]string{tp.Maturity, got[tp.Title][1]}
+	}
+	for _, c := range cards {
+		got[c.Title] = [2]string{got[c.Title][0], c.Maturity}
+	}
+	for title, m := range want {
+		if got[title] != [2]string{m, m} {
+			t.Errorf("%s: listagem/card = %v, quer %s nos dois", title, got[title], m)
+		}
+	}
+}

@@ -820,7 +820,11 @@ func (l *Library) TVSeries(ctx context.Context, v Viewer) ([]TopicCard, error) {
 		t.Kind, t.CoverPath = "series", cover.String
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	l.markCardMaturity(ctx, out)
+	return out, nil
 }
 
 func libTVSeriesHandler(l *Library, w http.ResponseWriter, r *http.Request) {

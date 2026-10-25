@@ -237,6 +237,7 @@ type TopicCard struct {
 	Count     int    `json:"count"`
 	Watched   int    `json:"watched"`
 	CoverPath string `json:"coverPath"`
+	Maturity  string `json:"maturity,omitempty"` // da capa: o que o card mostra
 }
 
 type PlaylistCard struct {
@@ -403,7 +404,53 @@ func (l *Library) topTopics(ctx context.Context, v Viewer, kind string, limit in
 		t.CoverPath = cover.String
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	l.markCardMaturity(ctx, out)
+	return out, nil
+}
+
+// markCardMaturity preenche a classificação de cada card pela capa.
+func (l *Library) markCardMaturity(ctx context.Context, cards []TopicCard) {
+	paths := make([]string, 0, len(cards))
+	for _, c := range cards {
+		paths = append(paths, c.CoverPath)
+	}
+	mat := l.maturityOfPaths(ctx, paths)
+	for i := range cards {
+		if m, ok := mat[cards[i].CoverPath]; ok {
+			cards[i].Maturity = maturityName(m)
+		}
+	}
+}
+
+// maturityOfPaths: a classificação de cada caminho que existe no catálogo.
+func (l *Library) maturityOfPaths(ctx context.Context, paths []string) map[string]int {
+	out := map[string]int{}
+	args := make([]any, 0, len(paths))
+	for _, p := range paths {
+		if p != "" {
+			args = append(args, p)
+		}
+	}
+	for len(args) > 0 {
+		n := min(len(args), 500)
+		rows, err := l.r.QueryContext(ctx, `SELECT path, maturity FROM media WHERE path IN (`+placeholders(n)+`)`, args[:n]...)
+		args = args[n:]
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var p string
+			var m int
+			if rows.Scan(&p, &m) == nil {
+				out[p] = m
+			}
+		}
+		rows.Close()
+	}
+	return out
 }
 
 // recentByFolder deixa um item por pasta (um capítulo com 30 páginas ou uma
