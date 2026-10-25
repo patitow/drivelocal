@@ -85,7 +85,9 @@ function useMasonry(items: FeedItem[], cols: number, key: string, grid: React.Re
   const run = useRef(0)
   useEffect(() => {
     const k = `${key}:${cols}`
-    const fresh = layout.key !== k
+    // item que saiu da lista (ex.: uma preferência mudou e o feed recarregou) refaz o layout do zero
+    const ids = new Set(items.map((it) => it.id))
+    const fresh = layout.key !== k || layout.cols.some((c) => c.some((it) => !ids.has(it.id)))
     const have = new Set(fresh ? [] : layout.cols.flat().map((it) => it.id))
     const fresh2 = items.filter((it) => !have.has(it.id))
     if (!fresh && !fresh2.length) return
