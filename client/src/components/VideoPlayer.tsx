@@ -111,6 +111,9 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   const [sync, setSync] = useState<SyncDelays>(() => loadSync(file.path))
   const [streamDelay, setStreamDelay] = useState(() => loadSync(file.path).audio)
   const [osd, setOsd] = useState<string | null>(null)
+  // "Retomando de X" discreto dentro do player (o toast global cobria o vídeo no celular)
+  const [resumeHint, setResumeHint] = useState<number | null>(null)
+  const resumeHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncRef = useRef(sync)
   const streamDelayRef = useRef(streamDelay)
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -236,6 +239,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     setSync(saved)
     setStreamDelay(saved.audio)
     setOsd(null)
+    setResumeHint(null)
     if (audioDelayTimerRef.current) clearTimeout(audioDelayTimerRef.current)
     infoRef.current = null
     audioSelRef.current = null
@@ -416,9 +420,9 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     } else {
       void restartRef.current(t, play, true)
     }
-    toast(`Retomando de ${formatDuration(t)}`, {
-      action: { label: 'Do início', onClick: () => void restartRef.current(0, isPlayingRef.current || pendingPlayRef.current) },
-    })
+    setResumeHint(t)
+    if (resumeHintTimerRef.current) clearTimeout(resumeHintTimerRef.current)
+    resumeHintTimerRef.current = setTimeout(() => setResumeHint(null), 6000)
   }, [tracksReady, progress.resumeAt, file.path])
 
   // Salva a posição a cada ~10 s tocando, ao pausar e ao trocar de arquivo/fechar
@@ -1251,6 +1255,26 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
                   <Button size="sm" className="flex-1 gap-1.5" onClick={() => playNext(upNext.index)}><Play className="h-4 w-4 fill-current" />Assistir agora</Button>
                   <Button size="sm" variant="outline" className="border-white/30 bg-transparent text-white hover:bg-white/10 hover:text-white" onClick={() => setUpNext(null)}>Cancelar</Button>
                 </div>
+              </div>
+            )}
+
+            {resumeHint !== null && (
+              <div
+                data-testid="resume-hint"
+                className="absolute left-3 top-14 z-20 flex items-center gap-2 rounded-full bg-black/70 py-1 pl-3 pr-1 text-xs text-white backdrop-blur sm:left-6 sm:text-sm"
+              >
+                <span>Retomando de {formatDuration(resumeHint)}</span>
+                <button
+                  type="button"
+                  className="rounded-full px-2 py-0.5 font-semibold hover:bg-white/15"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setResumeHint(null)
+                    void restartRef.current(0, isPlayingRef.current || pendingPlayRef.current)
+                  }}
+                >
+                  Do início
+                </button>
               </div>
             )}
 

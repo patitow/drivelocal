@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -107,5 +109,106 @@ func TestProcTrimDiskCap(t *testing.T) {
 	}
 	if ok2 {
 		t.Fatal("over the cap with only busy streams: new streams must be refused")
+	}
+}
+
+// fakeProcJob põe na tabela um stream "ainda gerando" com o arquivo dado; grow acrescenta bytes
+// e finish encerra como o ffmpeg faria (ok ou morto no meio).
+func fakeProcJob(t *testing.T, key string, first []byte) (grow func([]byte), finish func(failed bool)) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "s.mp4")
+	if err := os.WriteFile(path, first, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	j := &procJob{key: key, file: path, mode: "remux", ctx: ctx, cancel: cancel, size: int64(len(first)), changed: make(chan struct{})}
+	procMu.Lock()
+	procJobs[key] = j
+	procMu.Unlock()
+	t.Cleanup(func() {
+		cancel()
+		procMu.Lock()
+		delete(procJobs, key)
+		procMu.Unlock()
+	})
+	grow = func(b []byte) {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		f.Write(b)
+		f.Close()
+		j.mu.Lock()
+		j.size += int64(len(b))
+		j.notify()
+		j.mu.Unlock()
+	}
+	finish = func(failed bool) {
+		j.mu.Lock()
+		j.done, j.failed = true, failed
+		j.notify()
+		j.mu.Unlock()
+	}
+	return grow, finish
+}
+
+// No celular o primeiro pedido cai e o Chrome volta com Range enquanto o ffmpeg ainda gera.
+// Se o 206 de tamanho "*" terminar antes do fim real, o Chrome toma isso como fim do vídeo
+// (som some e pula para o fim). A resposta tem que acompanhar o ffmpeg até ele terminar.
+func TestProcRangeWhileGeneratingFollowsToEnd(t *testing.T) {
+	data := bytes.Repeat([]byte("0123456789abcdef"), 512<<10) // 8 MB
+	grow, finish := fakeProcJob(t, "fake-range", data[:1<<20])
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serveProc(w, r, "fake-range", "x.mkv", "remux", nil, nil)
+	}))
+	defer srv.Close()
+
+	go func() {
+		for off := 1 << 20; off < len(data); off += 1 << 20 {
+			time.Sleep(20 * time.Millisecond)
+			grow(data[off : off+1<<20])
+		}
+		finish(false)
+	}()
+	req, _ := http.NewRequest("GET", srv.URL, nil)
+	req.Header.Set("Range", "bytes=100-")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent || !strings.HasPrefix(resp.Header.Get("Content-Range"), "bytes 100-") {
+		t.Fatalf("status %d Content-Range %q", resp.StatusCode, resp.Header.Get("Content-Range"))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, data[100:]) {
+		t.Fatalf("got %d bytes, want the rest of the stream (%d)", len(body), len(data)-100)
+	}
+}
+
+// ffmpeg morto no meio: o arquivo parcial não pode parecer o fim do vídeo, então a conexão cai.
+func TestProcPartialStreamAbortsConnection(t *testing.T) {
+	data := bytes.Repeat([]byte("x"), 1<<20)
+	_, finish := fakeProcJob(t, "fake-partial", data)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serveProc(w, r, "fake-partial", "x.mkv", "remux", nil, nil)
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		finish(true)
+	}()
+	if _, err := io.ReadAll(resp.Body); err == nil {
+		t.Fatal("partial stream ended cleanly; the browser would take it as the end of the video")
 	}
 }

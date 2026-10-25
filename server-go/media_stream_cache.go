@@ -29,7 +29,7 @@ var (
 	procIdleGrace = 10 * time.Minute // sem leitores por esse tempo: mata o ffmpeg (libera a vaga)
 	procKeep      = 30 * time.Minute // sem leitores por esse tempo: apaga o arquivo
 	procMaxJobs   = 6                // arquivos guardados; os ociosos mais antigos saem primeiro
-	procChunk     = int64(4 << 20)   // pedido com Range e ffmpeg ainda gerando: entrega até esse tanto
+	procOpenEnd   = int64(1 << 40)   // pedido com Range e ffmpeg ainda gerando: fim provisório anunciado no Content-Range
 	// teto de disco somando todos os streams (inclusive os em uso): acima dele, apaga os ociosos e,
 	// se não bastar, recusa stream novo (503) em vez de encher o disco
 	procMaxBytes = int64(20 << 30)
@@ -349,8 +349,10 @@ func parseRangeStart(h string) (int64, bool) {
 }
 
 // serveProc entrega o stream a partir do Range pedido. Sem Range (ou bytes=0-): 200 com tudo,
-// acompanhando o ffmpeg. Com Range: 206 até o fim (se pronto) ou até procChunk bytes já gerados,
-// com tamanho total "*" enquanto o ffmpeg não termina; o <video> pede o resto em seguida.
+// acompanhando o ffmpeg. Com Range: 206 até o fim; enquanto o ffmpeg não termina, o tamanho total
+// vai como "*" e a resposta segue aberta acompanhando o ffmpeg. Não dá para entregar só um pedaço:
+// o Chrome trata o fim de um 206 de tamanho desconhecido como fim do vídeo (som some e pula para o fim).
+// Pelo mesmo motivo, stream parcial (ffmpeg morto) derruba a conexão em vez de terminar limpo.
 func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, slots chan struct{}, args []string) {
 	from, ranged := parseRangeStart(r.Header.Get("Range"))
 	if from == 0 {
@@ -424,17 +426,16 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 		end = size - 1
 	}
 	if ranged {
-		if !done {
-			// espera juntar um bloco razoável para não virar uma enxurrada de pedidos minúsculos
-			size, done, _ = j.waitFor(r.Context(), from+procChunk-1)
-			end = min(size, from+procChunk) - 1
-		}
 		total := "*"
 		if done && !partial {
 			total = strconv.FormatInt(size, 10)
 		}
-		h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", from, end, total))
-		h.Set("Content-Length", strconv.FormatInt(end-from+1, 10))
+		if done {
+			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", from, end, total))
+			h.Set("Content-Length", strconv.FormatInt(end-from+1, 10))
+		} else {
+			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", from, from+procOpenEnd-1))
+		}
 		w.WriteHeader(http.StatusPartialContent)
 	} else {
 		if end >= 0 {
@@ -456,6 +457,9 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 		size, done, ch := j.state()
 		if pos >= size {
 			if done {
+				if j.isFailed() {
+					panic(http.ErrAbortHandler)
+				}
 				return
 			}
 			select {
@@ -479,6 +483,9 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 		if rerr != nil && rerr != io.EOF {
 			return
 		}
+	}
+	if partial {
+		panic(http.ErrAbortHandler)
 	}
 }
 
