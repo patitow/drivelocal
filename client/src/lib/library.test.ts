@@ -68,3 +68,34 @@ describe('library client', () => {
     expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'DELETE', url: '/api/me/favorites/7' }))
   })
 })
+
+describe('segunda barreira do conteúdo explícito', () => {
+  const it3 = (id: number, maturity: string) => ({ id, maturity, path: `p/${id}.mp4` })
+  const home = () => ({
+    shelves: [
+      { id: 'continue', kind: 'items', items: [it3(1, 'geral'), it3(2, 'explicito')] },
+      { id: 'top-creator', kind: 'items', items: [it3(3, 'explicito')] },
+    ],
+  })
+  const respond = (prefs: object) => request.mockImplementation((cfg?: { url?: string }) =>
+    Promise.resolve({ data: cfg?.url === '/api/me/prefs' ? prefs : home() }))
+
+  beforeEach(() => request.mockReset())
+
+  it('resposta velha não mostra explícito com o modo desligado', async () => {
+    respond({ restrictedAllowed: true, restrictedMode: false })
+    await library.prefs()
+    const d = await library.home()
+    expect(d.shelves.map((s) => s.id)).toEqual(['continue'])
+    expect(d.shelves[0].items?.map((i) => i.id)).toEqual([1])
+  })
+
+  it('com o modo ligado passa tudo, e o switch vale na hora', async () => {
+    respond({ restrictedAllowed: true, restrictedMode: true })
+    await library.prefs()
+    expect((await library.home()).shelves).toHaveLength(2)
+    respond({ restrictedAllowed: true, restrictedMode: false })
+    await library.setRestrictedMode(false)
+    expect((await library.home()).shelves[0].items?.map((i) => i.id)).toEqual([1])
+  })
+})

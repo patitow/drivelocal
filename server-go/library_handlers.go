@@ -538,7 +538,9 @@ func libHomeHandler(l *Library, w http.ResponseWriter, r *http.Request) {
 		libFail(w, err)
 		return
 	}
-	w.Header().Set("Cache-Control", "private, max-age=30")
+	// a home muda com as preferências e o progresso; o servidor já guarda 45 s em memória e invalida
+	// certo, e o cache do navegador devolveria a home de antes da troca
+	w.Header().Set("Cache-Control", "no-store")
 	libJSON(w, home)
 }
 

@@ -162,6 +162,36 @@ async function call<T>(method: string, url: string, data?: unknown, params?: Rec
   return res.data
 }
 
+// Segunda barreira do conteúdo explícito: o servidor já filtra, mas uma resposta velha (cache, corrida com
+// o switch) não pode mostrá-lo com o modo desligado. Sem saber o modo, esconde.
+let restrictedGate: Promise<boolean> | null = null
+const restrictedOf = (p: Prefs) => !!p.restrictedAllowed && !!p.restrictedMode
+function restrictedOn(): Promise<boolean> {
+  restrictedGate ??= call<Prefs>('GET', '/api/me/prefs').then(restrictedOf, () => {
+    restrictedGate = null
+    return false
+  })
+  return restrictedGate
+}
+
+// tira de toda lista, em qualquer profundidade, o que vier marcado como explícito
+export function dropMature<T>(data: T): T {
+  if (Array.isArray(data)) {
+    return data
+      .filter((v) => !(v && typeof v === 'object' && (v as { maturity?: unknown }).maturity === 'explicito'))
+      .map(dropMature) as T
+  }
+  if (data && typeof data === 'object') {
+    return Object.fromEntries(Object.entries(data).map(([k, v]) => [k, dropMature(v)])) as T
+  }
+  return data
+}
+
+async function view<T>(req: Promise<T>): Promise<T> {
+  const [data, on] = await Promise.all([req, restrictedOn()])
+  return on ? data : dropMature(data)
+}
+
 export type MetaSource = 'anilist' | 'mal' | 'kitsu' | 'imdb' | 'tmdb' | 'tvmaze' | 'wikipedia'
 export type MetaKind = 'anime' | 'manga' | 'movie' | 'series' | 'person'
 // Cadastro: entradas de cada estante e a ficha curada (vence a busca automática).
@@ -213,7 +243,7 @@ export interface ExtMeta {
 }
 
 export const library = {
-  items: (q: ItemQuery) => call<ItemPage>('GET', '/api/catalog/items', undefined, itemQueryParams(q)),
+  items: (q: ItemQuery) => view(call<ItemPage>('GET', '/api/catalog/items', undefined, itemQueryParams(q))),
   item: (id: number) => call<LibraryItem>('GET', `/api/catalog/items/${id}`),
   lookup: (path: string) => call<LibraryItem>('GET', '/api/catalog/lookup', undefined, { path }),
   setTags: (id: number, add: string[], remove: string[] = []) =>
@@ -221,7 +251,7 @@ export const library = {
   tags: (q = '') => call<{ tags: TagInfo[] }>('GET', '/api/tags', undefined, q ? { q } : undefined).then((r) => r.tags ?? []),
   topics: (params: { kind?: string; q?: string; favorites?: boolean; limit?: number } = {}) =>
     call<{ topics: TopicInfo[]; total: number }>('GET', '/api/topics', undefined, itemQueryParams(params as ItemQuery)),
-  topicItems: (id: number) => call<ItemPage>('GET', `/api/topics/${id}/items`, undefined, { limit: '500' }),
+  topicItems: (id: number) => view(call<ItemPage>('GET', `/api/topics/${id}/items`, undefined, { limit: '500' })),
   favorite: (id: number, on: boolean) => call<{ favorite: boolean }>(on ? 'PUT' : 'DELETE', `/api/me/favorites/${id}`),
   // quem não é admin: sugere juntar (into) ou tirar dos criadores; vai para a Revisão
   suggestTopic: (id: number, action: 'merge' | 'invalid', into?: number) =>
@@ -229,12 +259,13 @@ export const library = {
   favoriteTopic: (id: number, on: boolean) => call<{ favorite: boolean }>(on ? 'PUT' : 'DELETE', `/api/me/favorite-topics/${id}`),
   hide: (id: number, on: boolean) => call<{ hidden: boolean }>(on ? 'PUT' : 'DELETE', `/api/me/hidden/${id}`),
   search: (q: ItemQuery) =>
-    call<GroupedSearch>('GET', '/api/catalog/search', undefined, { ...itemQueryParams(q), group: 'series' }),
-  home: () => call<HomeData>('GET', '/api/catalog/home'),
+    view(call<GroupedSearch>('GET', '/api/catalog/search', undefined, { ...itemQueryParams(q), group: 'series' })),
+  // estante de itens que ficou vazia pelo filtro sai junto
+  home: () => view(call<HomeData>('GET', '/api/catalog/home')).then((d) => ({ ...d, shelves: d.shelves.filter((s) => s.kind !== 'items' || (s.items?.length ?? 0) > 0) })),
   tvSeries: () => call<{ series: TopicCard[] }>('GET', '/api/catalog/tv-series').then((r) => r.series),
   franchises: () => call<{ franchises: FranchiseInfo[] }>('GET', '/api/catalog/franchises').then((r) => r.franchises ?? []),
   feed: (scope: FeedScope, seed: number, offset: number, limit = 24) =>
-    call<FeedPage>('GET', '/api/catalog/feed', undefined, { scope, seed: String(seed), offset: String(offset), limit: String(limit) }),
+    view(call<FeedPage>('GET', '/api/catalog/feed', undefined, { scope, seed: String(seed), offset: String(offset), limit: String(limit) })),
   mangas: () => call<{ works: MangaWork[] }>('GET', '/api/catalog/mangas').then((r) => r.works ?? []),
   // Páginas de um capítulo, na ordem de leitura.
   mangaPages: (dir: string) =>
@@ -243,8 +274,11 @@ export const library = {
   // Tira do "continuar assistindo" sem apagar progresso; volta com progresso novo.
   dismissContinue: (id: number) => call<unknown>('DELETE', `/api/me/continue/${id}`),
   clearContinue: () => call<{ dismissed: number }>('DELETE', '/api/me/continue'),
-  continueWatching: () => call<{ items: LibraryItem[] }>('GET', '/api/me/continue').then((r) => r.items ?? []),
-  prefs: () => call<Prefs>('GET', '/api/me/prefs'),
+  continueWatching: () => view(call<{ items: LibraryItem[] }>('GET', '/api/me/continue')).then((r) => r.items ?? []),
+  prefs: () => call<Prefs>('GET', '/api/me/prefs').then((p) => {
+    restrictedGate = Promise.resolve(restrictedOf(p))
+    return p
+  }),
   savePrefs: (p: Pick<Prefs, 'autoResume' | 'autoplay'>) => call<Prefs>('PUT', '/api/me/prefs', p),
   mangaProgress: () => call<Record<string, MangaReadState>>('GET', '/api/me/manga-progress'),
   saveMangaProgress: (p: Record<string, MangaReadState>) => call<Record<string, MangaReadState>>('PUT', '/api/me/manga-progress', p),
@@ -256,13 +290,16 @@ export const library = {
     call<{ meta: ExtMeta | null }>('GET', '/api/meta', undefined, { q, ...(kind ? { kind } : {}), ...(ref ? { ref } : {}) }).then((r) => r.meta),
   // capa e banner das fichas do cadastro, por ref (para os cards)
   art: () => call<{ art: Record<string, EntryArt> }>('GET', '/api/meta/art').then((r) => r.art ?? {}),
-  setRestrictedMode: (on: boolean) => call<Prefs>('PUT', '/api/me/prefs', { restrictedMode: on }),
+  setRestrictedMode: (on: boolean) => call<Prefs>('PUT', '/api/me/prefs', { restrictedMode: on }).then((p) => {
+    restrictedGate = Promise.resolve(restrictedOf(p))
+    return p
+  }),
   progressByPath: (path: string) => call<PathProgress>('GET', '/api/me/progress', undefined, { path }),
   saveProgressByPath: (path: string, positionS: number, durationS: number, completed?: boolean, tracks?: TrackChoice) =>
     call<unknown>('PUT', '/api/me/progress', { positionS, durationS, completed, ...tracks }, { path }),
   clearProgress: (id: number) => call<unknown>('DELETE', `/api/me/progress/${id}`),
   playlists: () => call<{ playlists: Playlist[] }>('GET', '/api/playlists').then((r) => r.playlists ?? []),
-  playlist: (id: number) => call<{ playlist: Playlist; items: LibraryItem[] }>('GET', `/api/playlists/${id}`),
+  playlist: (id: number) => view(call<{ playlist: Playlist; items: LibraryItem[] }>('GET', `/api/playlists/${id}`)),
   createPlaylist: (name: string, visibility: Playlist['visibility'] = 'private') =>
     call<Playlist>('POST', '/api/playlists', { name, visibility }),
   deletePlaylist: (id: number) => call<unknown>('DELETE', `/api/playlists/${id}`),

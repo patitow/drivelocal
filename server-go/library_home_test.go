@@ -228,3 +228,19 @@ func libTestRouter(as string) *mux.Router {
 	registerLibraryRoutes(api)
 	return r
 }
+
+// A home muda quando o usuário troca uma preferência de visibilidade: guardada no navegador, o
+// refetch logo depois da troca recebia a home de antes e mostrava o que devia sumir.
+func TestHomeNotCachedByBrowser(t *testing.T) {
+	fx := newLibFixture(t)
+	r := httptest.NewRequest("GET", "/api/catalog/home", nil)
+	r.Header.Set("X-User-ID", "u-new")
+	rec := httptest.NewRecorder()
+	libHomeHandler(fx.l, rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, quer no-store", got)
+	}
+}
