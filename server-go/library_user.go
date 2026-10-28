@@ -139,6 +139,65 @@ func (l *Library) ClearProgress(ctx context.Context, userID string, mediaID int6
 	})
 }
 
+// fixProgressDuration acerta o progresso salvo com uma duração maior que a real
+// (a barra mostrava "parou em 52%" no fim do episódio) e conclui o que já passou do fim.
+func (l *Library) fixProgressDuration(ctx context.Context, mediaID int64, dur float64) {
+	l.w.ExecContext(ctx, `UPDATE watch_progress SET duration_s = ?1,
+		  position_s = MIN(position_s, ?1),
+		  completed = CASE WHEN position_s >= ?1 * ?2 THEN 1 ELSE completed END
+		WHERE media_id = ?3 AND duration_s > ?1 + 2`, dur, progressDoneFrac, mediaID)
+}
+
+// SetWatched marca (posição no fim, concluído) ou desmarca (sem progresso) vários vídeos de uma vez,
+// como uma temporada inteira. Só entra o que o usuário vê; as faixas escolhidas ficam.
+func (l *Library) SetWatched(ctx context.Context, v Viewer, ids []int64, watched bool) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	vis, args := v.visibleSQL(true)
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	q := `SELECT m.id, COALESCE(m.duration_s, 0) FROM media m WHERE m.kind = 'video' AND m.id IN (` + ph + `) AND ` + vis
+	all := make([]any, 0, len(ids)+len(args))
+	for _, id := range ids {
+		all = append(all, id)
+	}
+	rows, err := l.r.QueryContext(ctx, q, append(all, args...)...)
+	if err != nil {
+		return 0, err
+	}
+	type target struct {
+		id  int64
+		dur float64
+	}
+	var ts []target
+	for rows.Next() {
+		var t target
+		if rows.Scan(&t.id, &t.dur) == nil {
+			ts = append(ts, t)
+		}
+	}
+	rows.Close()
+	now := nowUnix()
+	err = l.tx(ctx, func(tx *sql.Tx) error {
+		for _, t := range ts {
+			var err error
+			if watched {
+				_, err = tx.Exec(`INSERT INTO watch_progress(user_id, media_id, position_s, duration_s, completed, updated_at) VALUES (?,?,?,?,1,?)
+					ON CONFLICT(user_id, media_id) DO UPDATE SET position_s=excluded.position_s,
+					  duration_s=CASE WHEN excluded.duration_s > 0 THEN excluded.duration_s ELSE watch_progress.duration_s END,
+					  completed=1, updated_at=excluded.updated_at`, v.UserID, t.id, t.dur, t.dur, now)
+			} else {
+				_, err = tx.Exec(`DELETE FROM watch_progress WHERE user_id=? AND media_id=?`, v.UserID, t.id)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return len(ts), err
+}
+
 // ContinueWatching: vídeos começados e não terminados, mais recentes primeiro.
 func (l *Library) ContinueWatching(ctx context.Context, v Viewer, limit int) ([]ItemDTO, error) {
 	limit = clampLimit(limit, 20, 100)

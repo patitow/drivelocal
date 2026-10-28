@@ -10,6 +10,21 @@ import { library, formatDuration, MATURITY_LABEL, type LibraryItem } from '@/lib
 
 export type OpenFn = (list: LibraryItem[], index: number) => void
 
+// Episódio aberto de uma lista misturada (ex.: "Continuar assistindo"): a fila do player
+// vira a série dele, na ordem dos episódios, para o "próximo" ser o episódio seguinte.
+export async function inSeries(list: LibraryItem[], index: number): Promise<{ list: LibraryItem[]; index: number }> {
+  const it = list[index]
+  const topic = it?.topics.find((t) => t.kind === 'series')
+  if (!topic || list.every((x) => x.topics.some((t) => t.id === topic.id))) return { list, index }
+  try {
+    const r = await library.search({ topicId: topic.id, limit: 500, sort: 'added' })
+    const series = r.groups.find((g) => g.series?.items.some((x) => x.id === it.id))?.series
+    const i = series ? series.items.findIndex((x) => x.id === it.id) : -1
+    if (series && i >= 0) return { list: series.items, index: i }
+  } catch { /* sem a série, fica a lista de onde abriu */ }
+  return { list, index }
+}
+
 export const asFile = (it: LibraryItem) => ({
   name: it.name,
   path: it.path,

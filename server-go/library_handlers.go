@@ -66,6 +66,7 @@ func registerLibraryRoutes(protected *mux.Router) {
 	p.HandleFunc("/me/hidden/{id:[0-9]+}", h(libHiddenSetHandler)).Methods("PUT", "DELETE")
 	p.HandleFunc("/me/progress", h(libProgressByPathHandler)).Methods("GET", "PUT")
 	p.HandleFunc("/me/progress/{id:[0-9]+}", h(libProgressHandler)).Methods("PUT", "DELETE")
+	p.HandleFunc("/me/watched", h(libWatchedHandler)).Methods("POST")
 	p.HandleFunc("/me/continue", h(libContinueHandler)).Methods("GET", "DELETE")
 	p.HandleFunc("/me/continue/{id:[0-9]+}", h(libContinueDismissHandler)).Methods("DELETE")
 	p.HandleFunc("/me/prefs", h(libPrefsHandler)).Methods("GET", "PUT")
@@ -739,6 +740,28 @@ func libProgressHandler(l *Library, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	libJSON(w, p)
+}
+
+// /me/watched: {"ids": [...], "watched": true|false} marca ou desmarca vários de uma vez.
+func libWatchedHandler(l *Library, w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IDs     []int64 `json:"ids"`
+		Watched bool    `json:"watched"`
+	}
+	if err := decodeBody(r, &in); err != nil {
+		libFail(w, err)
+		return
+	}
+	if len(in.IDs) > 2000 {
+		libError(w, http.StatusBadRequest, "no máximo 2000 itens")
+		return
+	}
+	n, err := l.SetWatched(r.Context(), l.viewer(r), in.IDs, in.Watched)
+	if err != nil {
+		libFail(w, err)
+		return
+	}
+	libJSON(w, map[string]any{"updated": n})
 }
 
 // /me/progress?path=... — usado pela ponte do player, que só conhece o caminho.

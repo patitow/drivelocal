@@ -23,7 +23,10 @@ var (
 	reBrackets    = regexp.MustCompile(`[\[【(（][^\]】)）]*[\]】)）]`)
 	reResolution  = regexp.MustCompile(`(?i)\b(2160|1080|720|480|360)p\b`)
 	reSxxExx      = regexp.MustCompile(`(?i)\bS(\d{1,2})\s?E(\d{1,4}(?:\.\d)?)\b`)
+	reNxEp        = regexp.MustCompile(`(?i)\b(\d{1,2})x(\d{2,3})\b`) // "1x05"
 	reDashEp      = regexp.MustCompile(`\s-\s(\d{1,4}(?:\.\d)?)(?:v\d)?(?:\s|$)`)
+	// "Título 07 - Nome do episódio": o número antes do traço é o episódio
+	reNumDash     = regexp.MustCompile(`\s(\d{1,4}(?:\.\d)?)(?:v\d)?\s-\s\S`)
 	reEpWord      = regexp.MustCompile(`(?i)\b(?:ep|episode|episódio|epis[oó]dio|e)\.?\s?(\d{1,4})\b`)
 	reLeadNum     = regexp.MustCompile(`^(\d{1,3})(?:\.|\s-\s|\s)\s*`)
 	reTrailingNum = regexp.MustCompile(`\s(\d{1,3})(?:v\d)?$`)
@@ -73,7 +76,16 @@ func ParseMediaName(name string) ParsedName {
 		p.Season, _ = strconv.Atoi(work[m[2]:m[3]])
 		p.Episode, _ = strconv.ParseFloat(work[m[4]:m[5]], 64)
 		p.Title = cleanTitle(work[:m[0]])
+	} else if m := reNxEp.FindStringSubmatchIndex(work); m != nil {
+		p.Season, _ = strconv.Atoi(work[m[2]:m[3]])
+		p.Episode, _ = strconv.ParseFloat(work[m[4]:m[5]], 64)
+		if p.Title = cleanTitle(work[:m[0]]); p.Title == "" {
+			p.Title = cleanTitle(work[m[1]:]) // "1x05 - Nome do episódio"
+		}
 	} else if m := reDashEp.FindStringSubmatchIndex(work); m != nil {
+		p.Episode, _ = strconv.ParseFloat(work[m[2]:m[3]], 64)
+		p.Title = cleanTitle(work[:m[0]])
+	} else if m := reNumDash.FindStringSubmatchIndex(work); m != nil && m[0] > 0 && !looksLikeYear(work[m[2]:m[3]]) {
 		p.Episode, _ = strconv.ParseFloat(work[m[2]:m[3]], 64)
 		p.Title = cleanTitle(work[:m[0]])
 	} else if m := reLeadNum.FindStringSubmatchIndex(work); m != nil && len(work) > m[1] {

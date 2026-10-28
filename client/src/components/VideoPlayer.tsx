@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Play, Pause, Volume2, VolumeX, Maximize, Download, X, Loader2, ChevronLeft, ChevronRight, Captions, AudioLines, Check, FileWarning, SkipForward } from 'lucide-react'
+import { Play, Pause, Volume2, VolumeX, Maximize, Download, X, Loader2, ChevronLeft, ChevronRight, Captions, AudioLines, Check, FileWarning, SkipForward, RotateCcw, RotateCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { buildStreamUrlSync, buildDownloadUrlSync, buildFontUrlSync, buildSubtitleUrlSync } from '@/lib/utils'
 import { saveAs } from 'file-saver'
@@ -94,7 +94,17 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
   const [showControls, setShowControls] = useState(true) // Control visibility of UI
   const [videoBox, setVideoBox] = useState<{ left: number; width: number } | null>(null)
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const swipeStartXRef = useRef<number | null>(null)
+  const showControlsRef = useRef(showControls)
+  showControlsRef.current = showControls
+  // Celular: toque mostra/esconde os controles (com o botão grande de pausa); toque duplo
+  // nas laterais volta/avança 10 s. O toque simples na lateral espera um pouco pelo segundo.
+  const [touchUi, setTouchUi] = useState(false)
+  const touchTapRef = useRef(false)
+  const lastTouchAtRef = useRef(0)
+  const lastTapRef = useRef<{ at: number; side: number } | null>(null)
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [seekFlash, setSeekFlash] = useState<{ side: number; key: number } | null>(null)
+  const [bufferedEnd, setBufferedEnd] = useState(0)
   const isPlayingRef = useRef(false)
   const lastTimeRef = useRef(0)
   const authRetriedRef = useRef(false)
@@ -228,6 +238,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     setHasError(false)
     setHasStartedPlaying(false)
     setCurrentTime(0)
+    setBufferedEnd(0)
     setDuration(0)
     setIsPlaying(false)
     setVideoBox(null)
@@ -540,7 +551,9 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
         // MP4 fragmentado não informa a duração: usa a do ffprobe
         setDuration(infoRef.current?.duration || 0)
       } else {
-        setDuration(video.duration)
+        // cabeçalho do contêiner pode passar do fim (legenda com tempo errado): o ffprobe mede vídeo e áudio
+        const probed = infoRef.current?.duration || 0
+        setDuration(probed > 0 && video.duration > probed + 2 ? probed : video.duration)
       }
       // sem imagem e sem erro (ex.: mpeg4/wmv no Chrome): tenta o próximo modo
       if (modeRef.current !== 'transcode' && silentFailure(infoRef.current, { videoWidth: video.videoWidth, playedSeconds: 0 })) {
@@ -563,7 +576,19 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       updateVideoBox()
     }
 
+    // quanto já carregou a partir de onde está tocando, como a barra cinza do YouTube
+    const handleProgress = () => {
+      const b = video.buffered
+      const now = video.currentTime
+      let end = 0
+      for (let i = 0; i < b.length; i++) {
+        if (b.start(i) <= now + 0.5 && b.end(i) >= now) end = b.end(i)
+      }
+      setBufferedEnd(end > 0 ? offsetRef.current + end : 0)
+    }
+
     const handleTimeUpdate = () => {
+      handleProgress()
       if (scrubbingRef.current) return
       const t = Math.max(0, offsetRef.current + video.currentTime)
       lastTimeRef.current = t
@@ -657,6 +682,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
 
     video.addEventListener('loadedmetadata', handleLoadedMetadata)
     video.addEventListener('timeupdate', handleTimeUpdate)
+    video.addEventListener('progress', handleProgress)
     video.addEventListener('ended', handleEnded)
     video.addEventListener('error', handleError)
     video.addEventListener('loadstart', handleLoadStart)
@@ -670,6 +696,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata)
       video.removeEventListener('timeupdate', handleTimeUpdate)
+      video.removeEventListener('progress', handleProgress)
       video.removeEventListener('ended', handleEnded)
       video.removeEventListener('error', handleError)
       video.removeEventListener('loadstart', handleLoadStart)
@@ -681,6 +708,59 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       video.removeEventListener('play', handlePlay)
     }
   }, [src, hasStartedPlaying])
+
+  const hideControls = () => {
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current)
+    setShowControls(false)
+  }
+
+  // controles mostrados ou escondidos por um toque; pausado, ficam até o próximo toque
+  const toggleOverlay = () => {
+    if (showControlsRef.current) { hideControls(); return }
+    if (videoRef.current?.paused) {
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current)
+      setShowControls(true)
+    } else showControlsTemporarily()
+  }
+
+  const handleVideoClick = (e: React.MouseEvent<HTMLVideoElement>) => {
+    e.stopPropagation()
+    if (!touchTapRef.current) { togglePlay(); return } // mouse: clique pausa, como antes
+    touchTapRef.current = false
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5
+    const side = x < 0.35 ? -1 : x > 0.65 ? 1 : 0
+    const now = Date.now()
+    const last = lastTapRef.current
+    if (tapTimerRef.current) { clearTimeout(tapTimerRef.current); tapTimerRef.current = null }
+    if (side !== 0 && last && last.side === side && now - last.at < 350) {
+      seekTo(lastTimeRef.current + side * 10)
+      setSeekFlash({ side, key: now })
+      lastTapRef.current = { at: now, side } // toques seguidos continuam pulando
+      return
+    }
+    lastTapRef.current = side !== 0 ? { at: now, side } : null
+    if (side === 0) { toggleOverlay(); return }
+    tapTimerRef.current = setTimeout(() => { tapTimerRef.current = null; toggleOverlay() }, 350)
+  }
+
+  const tapPlay = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const willPause = !videoRef.current?.paused
+    togglePlay()
+    if (willPause) {
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current)
+      setShowControls(true)
+    } else hideControls()
+  }
+
+  useEffect(() => {
+    if (!seekFlash) return
+    const t = setTimeout(() => setSeekFlash(null), 650)
+    return () => clearTimeout(t)
+  }, [seekFlash])
+
+  useEffect(() => () => { if (tapTimerRef.current) clearTimeout(tapTimerRef.current) }, [])
 
   const togglePlay = () => {
     const video = videoRef.current
@@ -970,6 +1050,8 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     if (!container) return
 
     const handleMouseMove = () => {
+      // o toque gera um mousemove de compatibilidade; quem decide no celular é o toque
+      if (Date.now() - lastTouchAtRef.current < 1000) return
       showControlsTemporarily()
     }
 
@@ -1096,35 +1178,9 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
       role="presentation" // teclado: atalhos globais no document (Esc fecha)
       onClick={handleBackdropClick}
       onTouchStart={(e) => {
-        showControlsTemporarily()
-        const target = e.target as HTMLElement
-        if (target.closest('input, button')) {
-          swipeStartXRef.current = null
-          return
-        }
-        if (e.touches.length === 1) {
-          swipeStartXRef.current = e.touches[0].clientX
-        }
-      }}
-      onTouchEnd={(e) => {
-        if (swipeStartXRef.current === null) {
-          return
-        }
-        const endX = e.changedTouches[0]?.clientX
-        const startX = swipeStartXRef.current
-        swipeStartXRef.current = null
-        if (endX === undefined) {
-          return
-        }
-        const dx = endX - startX
-        if (Math.abs(dx) < 60) {
-          return
-        }
-        if (dx < 0 && canGoNext) {
-          handleNext()
-        } else if (dx > 0 && canGoPrevious) {
-          handlePrevious()
-        }
+        lastTouchAtRef.current = Date.now()
+        // mexer nos controles mantém eles na tela; tocar no vídeo é tratado no próprio vídeo
+        if ((e.target as HTMLElement).closest('input, button')) showControlsTemporarily()
       }}
     >
       {/* Header - floats over the video, fades with the other controls */}
@@ -1152,7 +1208,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
         onClick={handleBackdropClick}
       >
             {/* Navigation Buttons - Only show when controls are visible */}
-            {canGoPrevious && showControls && (
+            {canGoPrevious && showControls && !touchUi && (
               <Button
                 variant="ghost"
                 size="lg"
@@ -1163,7 +1219,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
                 <ChevronLeft className="w-6 h-6" />
               </Button>
             )}
-            {canGoNext && showControls && (
+            {canGoNext && showControls && !touchUi && (
               <Button
                 variant="ghost"
                 size="lg"
@@ -1231,14 +1287,41 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               // translúcido o cobre — com os controles escondidos — e o canvas da legenda
               // passa a ser composto como preto opaco por cima. Opacidade < 1 impede a promoção.
               style={subId && (subKind === 'ass' || subKind === 'pgs') ? { opacity: 0.999 } : undefined}
-              onClick={(e) => {
-                e.stopPropagation()
-                togglePlay()
-              }}
+              onTouchStart={() => { touchTapRef.current = true; setTouchUi(true) }}
+              onClick={handleVideoClick}
               controls={false}
               preload="metadata"
             />
             
+            {touchUi && showControls && !isLoading && !hasError && !broken && (
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-10" data-testid="tap-overlay">
+                {canGoPrevious && (
+                  <button type="button" onClick={(e) => { e.stopPropagation(); handlePrevious() }} aria-label="Anterior"
+                    className="pointer-events-auto flex size-12 items-center justify-center rounded-full bg-black/45 text-white">
+                    <ChevronLeft className="size-6" />
+                  </button>
+                )}
+                <button type="button" onClick={tapPlay} aria-label={isPlaying ? 'Pausar' : 'Reproduzir'} data-testid="tap-play"
+                  className="pointer-events-auto flex size-20 items-center justify-center rounded-full bg-black/50 text-white">
+                  {isPlaying ? <Pause className="size-10 fill-current" /> : <Play className="ml-1 size-10 fill-current" />}
+                </button>
+                {canGoNext && (
+                  <button type="button" onClick={(e) => { e.stopPropagation(); handleNext() }} aria-label="Próximo"
+                    className="pointer-events-auto flex size-12 items-center justify-center rounded-full bg-black/45 text-white">
+                    <ChevronRight className="size-6" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {seekFlash && (
+              <div key={seekFlash.key} data-testid="seek-flash"
+                className={`pointer-events-none absolute inset-y-0 z-20 flex w-1/3 flex-col items-center justify-center gap-1 bg-white/10 text-white ${seekFlash.side < 0 ? 'left-0 rounded-r-[50%]' : 'right-0 rounded-l-[50%]'}`}>
+                {seekFlash.side < 0 ? <RotateCcw className="size-8" /> : <RotateCw className="size-8" />}
+                <span className="text-sm font-semibold">{seekFlash.side < 0 ? '−10 s' : '+10 s'}</span>
+              </div>
+            )}
+
             {subLoading && (
               <div
                 role="status"
@@ -1340,8 +1423,14 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               onMouseMove={showControlsTemporarily}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Progress Bar */}
-              <div className="mb-2">
+              {/* Progress Bar: por baixo do trilho, o quanto já carregou */}
+              <div className="relative mb-2">
+                {duration > 0 && bufferedEnd > 0 && (
+                  <div className="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full">
+                    <div className="h-full rounded-full bg-white/35" data-testid="buffered"
+                      style={{ width: `${Math.min(100, (bufferedEnd / duration) * 100)}%` }} />
+                  </div>
+                )}
                 <input
                   type="range"
                   min="0"

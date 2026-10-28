@@ -16,7 +16,7 @@ import {
   type LibraryItem,
   type Playlist,
 } from '@/lib/library'
-import { ItemGrid, Status, asFile, errorMessage, useInvalidateLibrary, useLoad, type OpenFn } from './catalogShared'
+import { ItemGrid, Status, asFile, errorMessage, inSeries, useInvalidateLibrary, useLoad, type OpenFn } from './catalogShared'
 import { HomeTab } from './HomeTab'
 import { SearchTab } from './SearchTab'
 import { WebImg, useArt } from './ExtMeta'
@@ -54,7 +54,13 @@ export function CatalogView({ tab }: { tab: Tab }) {
   const [player, setPlayer] = useState<PlayerState | null>(null)
   const goCatalog = useGoCatalog()
 
-  const open = useCallback<OpenFn>((list, index) => setPlayer({ list, index }), [])
+  const open = useCallback<OpenFn>((list, index) => {
+    setPlayer({ list, index })
+    // a fila troca pela série quando ela chega, se o player ainda estiver no mesmo episódio
+    void inSeries(list, index).then((next) => {
+      if (next.list !== list) setPlayer((p) => (p && p.list === list && p.index === index ? next : p))
+    })
+  }, [])
   const invalidate = useInvalidateLibrary()
   // ao fechar o player, progresso e "continuar" mudaram: revalida as telas
   const closePlayer = () => { setPlayer(null); void invalidate() }

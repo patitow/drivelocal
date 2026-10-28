@@ -303,6 +303,8 @@ export const library = {
   saveProgressByPath: (path: string, positionS: number, durationS: number, completed?: boolean, tracks?: TrackChoice) =>
     call<unknown>('PUT', '/api/me/progress', { positionS, durationS, completed, ...tracks }, { path }),
   clearProgress: (id: number) => call<unknown>('DELETE', `/api/me/progress/${id}`),
+  // Marca (no fim, concluído) ou desmarca (sem progresso) vários de uma vez, como uma temporada.
+  setWatched: (ids: number[], watched: boolean) => call<{ updated: number }>('POST', '/api/me/watched', { ids, watched }),
   playlists: () => call<{ playlists: Playlist[] }>('GET', '/api/playlists').then((r) => r.playlists ?? []),
   playlist: (id: number) => view(call<{ playlist: Playlist; items: LibraryItem[] }>('GET', `/api/playlists/${id}`)),
   createPlaylist: (name: string, visibility: Playlist['visibility'] = 'private') =>

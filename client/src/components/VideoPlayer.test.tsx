@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, fireEvent, waitFor } from '@testing-library/react'
+import '@testing-library/jest-dom/vitest'
+import { render, fireEvent, waitFor, screen } from '@testing-library/react'
 import { VideoPlayer } from './VideoPlayer'
 
 vi.mock('@/lib/api', () => ({
@@ -64,5 +65,69 @@ describe('VideoPlayer: token expirado', () => {
     fireEvent.error(video)
     await waitFor(() => expect(api.refreshToken).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(toast.info).toHaveBeenCalled())
+  })
+
+  it('no modo direto, cabeçalho mais longo que vídeo e áudio não estica a barra', async () => {
+    // legenda com tempo errado faz o mkv anunciar 45:39; as faixas de vídeo e áudio têm 23:56
+    vi.mocked(api.getMediaInfo).mockResolvedValue({ duration: 1436, audio: [], subtitles: [], fonts: [] } as never)
+    renderPlayer()
+    const video = document.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(video.src).toContain('token='))
+    await waitFor(() => expect(api.getMediaInfo).toHaveBeenCalled())
+    Object.defineProperty(video, 'duration', { configurable: true, value: 2739 })
+    fireEvent.loadedMetadata(video)
+    await waitFor(() => expect(document.body.textContent).toContain('/ 23:56'))
+    expect(document.body.textContent).not.toContain('45:39')
+  })
+
+  it('barra mostra o quanto do vídeo já carregou', async () => {
+    vi.mocked(api.getMediaInfo).mockResolvedValue({ duration: 1000, audio: [], subtitles: [], fonts: [] } as never)
+    renderPlayer()
+    const video = document.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(api.getMediaInfo).toHaveBeenCalled())
+    Object.defineProperty(video, 'duration', { configurable: true, value: 1000 })
+    fireEvent.loadedMetadata(video)
+    // dois trechos carregados; vale o que contém a posição atual
+    Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 2, start: (i: number) => [0, 500][i], end: (i: number) => [120, 900][i] } })
+    Object.defineProperty(video, 'currentTime', { configurable: true, writable: true, value: 600 })
+    fireEvent.progress(video)
+    await waitFor(() => expect(screen.getByTestId('buffered')).toHaveStyle({ width: '90%' }))
+  })
+
+  it('celular: toque mostra/esconde o botão grande; pausa só nele; toque duplo nas laterais pula 10 s', async () => {
+    renderPlayer()
+    const video = document.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(video.src).toContain('token='))
+    video.getBoundingClientRect = () => ({ left: 0, top: 0, width: 300, height: 200, right: 300, bottom: 200, x: 0, y: 0, toJSON: () => ({}) })
+    Object.defineProperty(video, 'paused', { configurable: true, get: () => false })
+    fireEvent.canPlay(video)
+    fireEvent.playing(video)
+    const tap = (x: number) => { fireEvent.touchStart(video); fireEvent.click(video, { clientX: x }) }
+
+    tap(150) // controles estavam visíveis: o toque esconde
+    await waitFor(() => expect(screen.queryByTestId('tap-overlay')).not.toBeInTheDocument())
+    tap(150)
+    expect(await screen.findByTestId('tap-overlay')).toBeInTheDocument()
+    expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('tap-play'))
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1)
+
+    tap(280)
+    tap(280)
+    expect(await screen.findByTestId('seek-flash')).toHaveTextContent('+10 s')
+    tap(20)
+    tap(20)
+    await waitFor(() => expect(screen.getByTestId('seek-flash')).toHaveTextContent('−10 s'))
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1)
+  })
+
+  it('celular: arrastar para o lado não troca de episódio', async () => {
+    const onNavigate = vi.fn()
+    const other = { ...file, name: 'b.mkv', path: 'Filmes/b.mkv' }
+    render(<VideoPlayer file={file} files={[file, other]} currentIndex={0} onClose={() => {}} onNavigate={onNavigate} />)
+    const video = document.querySelector('video') as HTMLVideoElement
+    fireEvent.touchStart(video, { touches: [{ clientX: 250 }] })
+    fireEvent.touchEnd(video, { changedTouches: [{ clientX: 20 }] })
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 })

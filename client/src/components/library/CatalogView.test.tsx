@@ -46,6 +46,7 @@ vi.mock('@/lib/library', async (orig) => {
       feed: vi.fn(),
       search: vi.fn(),
       dismissContinue: vi.fn(),
+      setWatched: vi.fn(),
       clearContinue: vi.fn(),
       addToPlaylist: vi.fn(),
       topicItems: vi.fn(),
@@ -213,6 +214,27 @@ describe('CatalogView', () => {
     expect((await screen.findAllByTestId('episode-row')).map((r) => r.textContent)).toEqual([expect.stringContaining('Episódio 1'), expect.stringContaining('Episódio 2')])
     await userEvent.click(screen.getByRole('button', { name: /Continuar/ }))
     expect(screen.getByTestId('player')).toHaveTextContent('ep 02.mkv de 2')
+  })
+
+  it('marca e desmarca episódio e a série inteira como vistos', async () => {
+    const eps = [item(1, 'ep 01.mkv', { episode: 1, progress: { positionS: 1400, durationS: 1400, completed: true, updatedAt: 1 } }), item(2, 'ep 02.mkv', { episode: 2 })]
+    lib.search.mockResolvedValue({
+      total: 2, truncated: false,
+      groups: [{ type: 'series', series: { key: 't7', topicId: 7, title: 'Serie Exemplo', coverPath: eps[0].path, matched: 2, total: 2, maturity: 'geral', next: eps[1], best: eps[0], items: eps, watched: 1 } }],
+    })
+    lib.setWatched.mockResolvedValue({ updated: 1 })
+    render(<Colecao />)
+    await userEvent.click(await screen.findByRole('tab', { name: /Busca/ }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Buscar' }), 'exemplo')
+    await userEvent.click(await screen.findByTestId('series-card'))
+    const unmark = await screen.findByRole('button', { name: /Desmarcar .*como visto/ })
+    expect(unmark).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(unmark)
+    expect(lib.setWatched).toHaveBeenLastCalledWith([1], false)
+    await userEvent.click(screen.getByRole('button', { name: /^Marcar .*como visto$/ }))
+    expect(lib.setWatched).toHaveBeenLastCalledWith([2], true)
+    await userEvent.click(screen.getByRole('button', { name: 'Marcar todos como vistos' }))
+    expect(lib.setWatched).toHaveBeenLastCalledWith([1, 2], true)
   })
 
   it('revisão de tópicos duplicados: juntar escolhendo o canônico e desfazer', async () => {

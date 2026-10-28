@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -180,5 +181,26 @@ func TestMediaInfoEmptyListsSerializeAsArrays(t *testing.T) {
 		if rec.Code != 200 || !strings.Contains(body, `"subtitles":[]`) || strings.Contains(body, "null") {
 			t.Fatalf("call %d: status %d body %s", i, rec.Code, body)
 		}
+	}
+}
+
+func TestBuildMediaInfoDurationIgnoresLongSubtitle(t *testing.T) {
+	// legenda com tempo errado estica o contêiner até 45 min; vídeo e áudio têm 24
+	out := ffprobeOutput{Streams: []ffprobeStream{
+		{Index: 0, CodecType: "video", CodecName: "hevc", Duration: "N/A", Tags: map[string]string{"DURATION": "00:23:55.976000000"}},
+		{Index: 1, CodecType: "audio", CodecName: "aac", Tags: map[string]string{"DURATION": "00:23:55.989000000"}},
+		{Index: 2, CodecType: "subtitle", CodecName: "subrip", Duration: "2739.387", Tags: map[string]string{"DURATION": "00:45:31.937000000"}},
+	}}
+	out.Format.Duration = "2739.387"
+	mi := buildMediaInfo(out, filepath.Join(t.TempDir(), "Ep.mkv"))
+	if math.Abs(mi.Duration-1435.989) > 0.01 {
+		t.Fatalf("duração = %v, queria a do vídeo/áudio (1435.989)", mi.Duration)
+	}
+
+	// sem duração por faixa, fica a do contêiner
+	out = ffprobeOutput{Streams: []ffprobeStream{{Index: 0, CodecType: "video", CodecName: "h264"}}}
+	out.Format.Duration = "1420.5"
+	if mi := buildMediaInfo(out, filepath.Join(t.TempDir(), "Ep.mp4")); mi.Duration != 1420.5 {
+		t.Fatalf("duração = %v, queria 1420.5", mi.Duration)
 	}
 }

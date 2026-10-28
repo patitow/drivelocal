@@ -42,3 +42,47 @@ func TestOrderByPartsKeepsSeasons(t *testing.T) {
 		t.Fatalf("temporadas nos nomes não devem ser reagrupadas: %+v", list)
 	}
 }
+
+// Arcos em pastas próprias, cada um recomeçando no episódio 1 e quase todos
+// com a temporada 1 padrão: a temporada dos nomes não separa os arcos, então
+// as pastas dividem (sem o número de ordem na frente).
+func TestOrderByPartsArcsWithRepeatedEpisodes(t *testing.T) {
+	s1, s2 := int64(1), int64(2)
+	ep := func(n float64) *float64 { return &n }
+	base := "Animes/Saga Longa"
+	list := []ItemDTO{
+		{ID: 1, Path: base + "/01. Primeiro Arco/Primeiro Arco 01 - Inicio, Part 1.mkv", Season: &s1, Episode: ep(1)},
+		{ID: 2, Path: base + "/01. Primeiro Arco/Primeiro Arco 02 - Inicio, Part 2.mkv", Season: &s1, Episode: ep(2)},
+		{ID: 3, Path: base + "/02. Filmes/Filme I.mkv"},
+		{ID: 4, Path: base + "/03. Segundo Arco/Segundo Arco 01 - Meio.mkv", Season: &s1, Episode: ep(1)},
+		{ID: 5, Path: base + "/04. Segundo Arco 2nd Season/Segundo Arco 2nd Season 01 - Fim.mkv", Season: &s2, Episode: ep(1)},
+	}
+	orderByParts(list, "Saga Longa")
+	var got []string
+	for _, it := range list {
+		got = append(got, fmt.Sprintf("%d:%s", it.ID, it.Part))
+	}
+	want := []string{"1:Primeiro Arco", "2:Primeiro Arco", "3:Filmes", "4:Segundo Arco", "5:Segundo Arco 2nd Season"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}
+
+// Temporadas nos nomes que batem com as pastas continuam mandando, mesmo com
+// uma pasta de extras sem número.
+func TestOrderByPartsSeasonsWithExtrasFolder(t *testing.T) {
+	s1, s2 := int64(1), int64(2)
+	ep := func(n float64) *float64 { return &n }
+	list := []ItemDTO{
+		{ID: 1, Path: "Series/Serie Exemplo/Season 1/Serie Exemplo S01E01.mkv", Season: &s1, Episode: ep(1)},
+		{ID: 2, Path: "Series/Serie Exemplo/Season 1/Serie Exemplo S01E02.mkv", Season: &s1, Episode: ep(2)},
+		{ID: 3, Path: "Series/Serie Exemplo/Season 2/Serie Exemplo S02E01.mkv", Season: &s2, Episode: ep(1)},
+		{ID: 4, Path: "Series/Serie Exemplo/Extras/Making of.mkv"},
+	}
+	orderByParts(list, "Serie Exemplo")
+	for _, it := range list {
+		if it.Part != "" {
+			t.Fatalf("temporadas já dividem; não deveria haver partes: %+v", list)
+		}
+	}
+}

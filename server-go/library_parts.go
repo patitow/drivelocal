@@ -19,6 +19,8 @@ var (
 	reParenYear  = regexp.MustCompile(`\(\s*((?:19|20)\d{2})(?:\s*[-–]\s*(?:19|20)\d{2})?\s*\)`)
 	reYearSpan   = regexp.MustCompile(`(?:19|20)\d{2}\s*[-–]\s*(?:19|20)\d{2}`)
 	reMultiSep   = regexp.MustCompile(`[\s\-–_.·:]+`)
+	// número de ordem na frente da pasta ("01. Nome", "02) Nome")
+	reOrdinal = regexp.MustCompile(`^\s*\d{1,3}[.)]\s+`)
 )
 
 // Pastas que só guardam material extra: vão para o fim da série e levam o nome
@@ -36,7 +38,8 @@ func isExtraDir(name string) bool {
 // partName limpa o nome de uma pasta: tira etiquetas entre colchetes, o título
 // da série, intervalos de episódios e pacotes de temporadas.
 func partName(dir, title string) string {
-	s := reBracketTag.ReplaceAllString(dir, " ")
+	s := reOrdinal.ReplaceAllString(dir, "")
+	s = reBracketTag.ReplaceAllString(s, " ")
 	s = reSeasonPack.ReplaceAllString(s, " ")
 	if title != "" {
 		s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(title)).ReplaceAllString(s, " ")
@@ -57,6 +60,34 @@ func partName(dir, title string) string {
 	return s
 }
 
+// seasonsDivide diz se a temporada dos nomes basta para separar a série: há
+// duas ou mais temporadas e nenhum par (temporada, episódio) se repete em
+// pastas diferentes. Arcos em pastas próprias que recomeçam no episódio 1 com
+// a mesma temporada (a padrão, 1) repetem o par, e aí quem divide são as pastas.
+func seasonsDivide(list []ItemDTO) bool {
+	type key struct {
+		season  int64
+		episode float64
+	}
+	seasons := map[int64]bool{}
+	dirOf := map[key]string{}
+	for _, it := range list {
+		if it.Season == nil || *it.Season <= 0 {
+			continue
+		}
+		seasons[*it.Season] = true
+		if it.Episode == nil || *it.Episode <= 0 {
+			continue
+		}
+		k, dir := key{*it.Season, *it.Episode}, path.Dir(it.Path)
+		if d, ok := dirOf[k]; ok && d != dir {
+			return false
+		}
+		dirOf[k] = dir
+	}
+	return len(seasons) > 1
+}
+
 type seriesPart struct {
 	label string
 	extra bool
@@ -70,13 +101,7 @@ func labelParts(list []ItemDTO, title string) (map[int64]string, []string) {
 	if len(list) < 2 {
 		return nil, nil
 	}
-	seasons := map[int64]bool{}
-	for _, it := range list {
-		if it.Season != nil && *it.Season > 0 {
-			seasons[*it.Season] = true
-		}
-	}
-	if len(seasons) > 1 {
+	if seasonsDivide(list) {
 		return nil, nil // as temporadas já dividem
 	}
 	// pasta comum a todos: a raiz da série

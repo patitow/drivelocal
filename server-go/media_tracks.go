@@ -175,9 +175,47 @@ func cloneMediaInfo(mi *MediaInfo) *MediaInfo {
 	return &c
 }
 
+// avDuration: o fim mais tardio entre as faixas de vídeo e áudio, ou 0 se alguma não informa.
+func avDuration(streams []ffprobeStream) float64 {
+	end := 0.0
+	for _, s := range streams {
+		if (s.CodecType != "video" || s.Disposition["attached_pic"] != 0) && s.CodecType != "audio" {
+			continue
+		}
+		d, err := strconv.ParseFloat(s.Duration, 64)
+		if err != nil || d <= 0 {
+			d = parseTagDuration(s.Tags["DURATION"])
+		}
+		if d <= 0 {
+			return 0
+		}
+		end = math.Max(end, d)
+	}
+	return end
+}
+
+// parseTagDuration lê a tag DURATION do Matroska ("00:23:55.976000000").
+func parseTagDuration(v string) float64 {
+	p := strings.Split(v, ":")
+	if len(p) != 3 {
+		return 0
+	}
+	h, e1 := strconv.Atoi(p[0])
+	m, e2 := strconv.Atoi(p[1])
+	sec, e3 := strconv.ParseFloat(p[2], 64)
+	if e1 != nil || e2 != nil || e3 != nil {
+		return 0
+	}
+	return float64(h*3600+m*60) + sec
+}
+
 func buildMediaInfo(out ffprobeOutput, full string) *MediaInfo {
 	mi := &MediaInfo{Audio: []AudioTrack{}, Subtitles: []SubtitleTrack{}, Fonts: []FontAttachment{}, VideoIndex: -1}
 	mi.Duration, _ = strconv.ParseFloat(out.Format.Duration, 64)
+	// legenda com tempo errado estica o contêiner: vale o fim do vídeo/áudio quando as faixas informam
+	if av := avDuration(out.Streams); av > 0 && (mi.Duration <= 0 || mi.Duration > av+2) {
+		mi.Duration = av
+	}
 	if st, err := strconv.ParseFloat(out.Format.StartTime, 64); err == nil && !math.IsNaN(st) && !math.IsInf(st, 0) {
 		mi.StartTime = st
 	}

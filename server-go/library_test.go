@@ -120,6 +120,15 @@ func TestParseMediaName(t *testing.T) {
 		{"Outra.Serie.S02E11.1080p.WEB-DL.mkv", "Outra Serie", 2, 11},
 		{"Filme Teste (2020).mp4", "Filme Teste", 0, 0},
 		{"Serie Qualquer 2nd Season - 03.mkv", "Serie Qualquer 2nd Season", 2, 3},
+		// "Título NN - Nome do episódio, Part N": o número é o que vem antes do traço
+		{"Saga Longa 07 - Arco do Vento, Part 2.mkv", "Saga Longa", 0, 7},
+		{"Saga Longa 2nd Season 03 - Arco da Chuva, Part 1.mkv", "Saga Longa 2nd Season", 2, 3},
+		{"Saga Curta 11 - Pedra.mkv", "Saga Curta", 0, 11},
+		{"Filme Antigo 1999 - Remaster.mkv", "Filme Antigo 1999 - Remaster", 0, 0},
+		// "1x05": temporada x episódio
+		{"2x05 - Nome do Episodio.mkv", "Nome do Episodio", 2, 5},
+		{"Serie Exemplo 3x12.mkv", "Serie Exemplo", 3, 12},
+		{"Serie Exemplo 1920x1080.mkv", "Serie Exemplo 1920x1080", 0, 0},
 	}
 	for _, c := range cases {
 		p := ParseMediaName(c.in)

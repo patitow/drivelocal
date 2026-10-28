@@ -497,6 +497,9 @@ CREATE TABLE entry_meta (
   updated_at INTEGER NOT NULL
 );
 `,
+	// v8: mkv com legenda de tempo errado anunciava o dobro da duração; zera para
+	// FillDurations ler de novo pelo fim do vídeo/áudio (e acertar o progresso junto).
+	`UPDATE media SET duration_s = NULL WHERE kind = 'video' AND lower(path) LIKE '%.mkv';`,
 }
 
 func (l *Library) migrate() error {

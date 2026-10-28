@@ -1,11 +1,11 @@
 // Séries: card em pilha, linha "Próximo episódio" e página da série.
 import { ArtFrame, MetaBlurb, WebImg, useArt, useExtMeta } from '../ExtMeta'
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, FileWarning, Play } from 'lucide-react'
+import { Check, CheckCheck, ChevronLeft, FileWarning, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatDuration, type LibraryItem, type SeriesGroup } from '@/lib/library'
+import { formatDuration, library, type LibraryItem, type SeriesGroup } from '@/lib/library'
 import { Thumbnail } from '@/components/Thumbnail'
-import { asFile, progressPct, type OpenFn } from '../catalogShared'
+import { asFile, progressPct, useInvalidateLibrary, type OpenFn } from '../catalogShared'
 import { Segmented, Still, totalTime, type Shelf } from './shelfUi'
 import { EditEntryButton } from '../EditEntryButton'
 
@@ -119,6 +119,14 @@ export function SeriesDetail({ s, shelf, onOpen, onBack, backLabel }: { s: Serie
   const ref = s.topicId ? `topic:${s.topicId}` : undefined
   const meta = useExtMeta(shelf.id === 'animes' ? 'anime' : null, s.title, ref)
   const art = useArt(ref)
+  const invalidate = useInvalidateLibrary()
+  const [busy, setBusy] = useState(false)
+  const mark = async (items: LibraryItem[], on: boolean) => {
+    setBusy(true)
+    try { await library.setWatched(items.map((it) => it.id), on); await invalidate() } finally { setBusy(false) }
+  }
+  const allSeen = shown.length > 0 && shown.every(seen)
+  const scope = parts.length > 1 ? 'temporada' : 'todos'
   return (
     <div ref={top} className="scroll-mt-9 space-y-8">
       <button type="button" onClick={onBack} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
@@ -177,6 +185,11 @@ export function SeriesDetail({ s, shelf, onOpen, onBack, backLabel }: { s: Serie
                 options={parts.map((p) => ({ id: p.id, label: `${p.label} (${p.items.length})` }))} />
             </div>
           )}
+          <button type="button" disabled={busy} onClick={() => void mark(shown, !allSeen)}
+            className="flex h-9 items-center gap-1.5 rounded-full border px-4 text-sm font-medium hover:bg-secondary disabled:opacity-50">
+            <CheckCheck className="h-4 w-4" />
+            {allSeen ? (scope === 'temporada' ? 'Desmarcar temporada' : 'Desmarcar todos') : (scope === 'temporada' ? 'Marcar temporada como vista' : 'Marcar todos como vistos')}
+          </button>
         </div>
         <ol className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {shown.map((it) => {
@@ -185,9 +198,9 @@ export function SeriesDetail({ s, shelf, onOpen, onBack, backLabel }: { s: Serie
             const p = progressPct(it)
             const name = epName(it, s.title)
             return (
-              <li key={it.id}>
+              <li key={it.id} className="flex items-center gap-1.5">
                 <button type="button" onClick={() => onOpen(s.items, i)} aria-label={`Tocar ${epLabel(it)}`} data-testid="episode-row"
-                  className={cn('group flex w-full min-w-0 items-center gap-3.5 rounded-2xl border p-2.5 text-left transition-colors hover:bg-secondary', current ? 'bg-card' : 'border-transparent bg-card/60')}
+                  className={cn('group flex min-w-0 flex-1 items-center gap-3.5 rounded-2xl border p-2.5 text-left transition-colors hover:bg-secondary', current ? 'bg-card' : 'border-transparent bg-card/60')}
                   style={current ? { borderColor: shelf.color } : undefined}>
                   <span className="relative block aspect-video w-[136px] shrink-0 overflow-hidden rounded-[10px] bg-muted">
                     <Thumbnail file={asFile(it)} className={cn('h-full w-full object-cover', seen(it) && 'opacity-60')} size="sm" />
@@ -213,7 +226,13 @@ export function SeriesDetail({ s, shelf, onOpen, onBack, backLabel }: { s: Serie
                       {[it.durationS ? formatDuration(it.durationS) : '', p > 0 && !seen(it) ? `parou em ${Math.round(p)}%` : ''].filter(Boolean).join(' · ')}
                     </span>
                   </span>
-                  {seen(it) && <Check className="h-5 w-5 shrink-0" style={{ color: shelf.color }} aria-label="Visto" />}
+                </button>
+                <button type="button" disabled={busy} onClick={() => void mark([it], !seen(it))}
+                  aria-label={seen(it) ? `Desmarcar ${epLabel(it)} como visto` : `Marcar ${epLabel(it)} como visto`} aria-pressed={seen(it)}
+                  title={seen(it) ? 'Desmarcar como visto' : 'Marcar como visto'}
+                  className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors hover:bg-secondary disabled:opacity-50', !seen(it) && 'text-muted-foreground')}
+                  style={seen(it) ? { color: shelf.color, borderColor: shelf.color } : undefined}>
+                  <Check className="h-5 w-5" />
                 </button>
               </li>
             )

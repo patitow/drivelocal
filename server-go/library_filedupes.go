@@ -343,6 +343,7 @@ func (l *Library) FillDurations(ctx context.Context) {
 				}
 				if err == nil && mi != nil && mi.Duration > 0 {
 					l.w.ExecContext(ctx, `UPDATE media SET duration_s=? WHERE id=?`, mi.Duration, j.id)
+					l.fixProgressDuration(ctx, j.id, mi.Duration)
 				} else {
 					if reason := brokenReason(err, mi); reason != "" {
 						l.w.ExecContext(ctx, `UPDATE media SET broken=? WHERE id=?`, reason, j.id)

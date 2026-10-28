@@ -119,6 +119,11 @@ func (l *Library) Scan(ctx context.Context, root string) (*ScanReport, error) {
 	} else {
 		logInfo("📚 Scan: %d vistos, +%d novos, %d atualizados, %d movidos, %d sumidos (%s)",
 			rep.Seen, rep.Added, rep.Updated, rep.Moved, rep.Missing, time.Since(rep.StartedAt).Round(time.Second))
+		if n, rerr := l.refreshParsedEpisodes(ctx); rerr != nil {
+			logWarn("Temporadas e episódios: %v", rerr)
+		} else if n > 0 {
+			logInfo("📚 %d itens com temporada/episódio recalculados", n)
+		}
 		// Tópicos novos podem ser grafias de tópicos existentes: só sugere
 		// (a fusão é sempre revisada).
 		if d, derr := l.DetectTopicDuplicates(ctx); derr != nil {
