@@ -108,6 +108,9 @@ describe('VideoPlayer: token expirado', () => {
     await waitFor(() => expect(screen.queryByTestId('tap-overlay')).not.toBeInTheDocument())
     tap(150)
     expect(await screen.findByTestId('tap-overlay')).toBeInTheDocument()
+    // no celular o play/pause é só o do meio, sem anterior/próximo nas laterais
+    expect(screen.getAllByRole('button', { name: /^(Pausar|Reproduzir)$/ })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: /^(Anterior|Próximo)$/ })).not.toBeInTheDocument()
     expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('tap-play'))
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1)

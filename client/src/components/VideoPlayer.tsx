@@ -82,6 +82,9 @@ const LONG_PAUSE_MS = 3 * 60 * 1000 // pausado além disso, remux/transcode reto
 // Sem capítulo de abertura no arquivo: botão de pular este tanto (abertura típica de anime).
 const INTRO_GUESS_S = 85
 
+// janela do toque duplo; o toque simples na lateral espera só isso antes de mostrar os controles
+const DOUBLE_TAP_MS = 250
+
 export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: VideoPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
@@ -733,7 +736,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     const now = Date.now()
     const last = lastTapRef.current
     if (tapTimerRef.current) { clearTimeout(tapTimerRef.current); tapTimerRef.current = null }
-    if (side !== 0 && last && last.side === side && now - last.at < 350) {
+    if (side !== 0 && last && last.side === side && now - last.at < DOUBLE_TAP_MS) {
       seekTo(lastTimeRef.current + side * 10)
       setSeekFlash({ side, key: now })
       lastTapRef.current = { at: now, side } // toques seguidos continuam pulando
@@ -741,7 +744,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     }
     lastTapRef.current = side !== 0 ? { at: now, side } : null
     if (side === 0) { toggleOverlay(); return }
-    tapTimerRef.current = setTimeout(() => { tapTimerRef.current = null; toggleOverlay() }, 350)
+    tapTimerRef.current = setTimeout(() => { tapTimerRef.current = null; toggleOverlay() }, DOUBLE_TAP_MS)
   }
 
   const tapPlay = (e: React.MouseEvent) => {
@@ -1185,7 +1188,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
     >
       {/* Header - floats over the video, fades with the other controls */}
       <div
-        className={`absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 bg-gradient-to-b from-black/70 to-transparent p-2 pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity duration-300 sm:p-4 ${
+        className={`absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 bg-gradient-to-b from-black/70 to-transparent p-2 pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity sm:p-4 ${touchUi ? 'duration-100' : 'duration-300'} ${
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
@@ -1282,7 +1285,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               src={tracksReady && !broken ? src : undefined}
               data-playback-mode={mode}
               data-time-base={base}
-              className="h-full w-full object-contain"
+              className="h-full w-full touch-manipulation object-contain"
               // Chrome no Android tira o vídeo da composição (overlay de hardware) quando nada
               // translúcido o cobre — com os controles escondidos — e o canvas da legenda
               // passa a ser composto como preto opaco por cima. Opacidade < 1 impede a promoção.
@@ -1294,23 +1297,13 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
             />
             
             {touchUi && showControls && !isLoading && !hasError && !broken && (
-              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-10" data-testid="tap-overlay">
-                {canGoPrevious && (
-                  <button type="button" onClick={(e) => { e.stopPropagation(); handlePrevious() }} aria-label="Anterior"
-                    className="pointer-events-auto flex size-12 items-center justify-center rounded-full bg-black/45 text-white">
-                    <ChevronLeft className="size-6" />
-                  </button>
-                )}
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/30" data-testid="tap-overlay">
                 <button type="button" onClick={tapPlay} aria-label={isPlaying ? 'Pausar' : 'Reproduzir'} data-testid="tap-play"
-                  className="pointer-events-auto flex size-20 items-center justify-center rounded-full bg-black/50 text-white">
-                  {isPlaying ? <Pause className="size-10 fill-current" /> : <Play className="ml-1 size-10 fill-current" />}
+                  className="pointer-events-auto flex size-24 items-center justify-center text-white">
+                  {isPlaying
+                    ? <Pause className="size-14 fill-current drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)]" />
+                    : <Play className="ml-1 size-14 fill-current drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)]" />}
                 </button>
-                {canGoNext && (
-                  <button type="button" onClick={(e) => { e.stopPropagation(); handleNext() }} aria-label="Próximo"
-                    className="pointer-events-auto flex size-12 items-center justify-center rounded-full bg-black/45 text-white">
-                    <ChevronRight className="size-6" />
-                  </button>
-                )}
               </div>
             )}
 
@@ -1415,7 +1408,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
             {/* Controls Overlay - matches the video's own rendered width so it
                 doesn't overhang into the backdrop next to a portrait video */}
             <div
-              className={`absolute bottom-0 bg-gradient-to-t from-black/60 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] transition-all duration-300 ${
+              className={`absolute bottom-0 bg-gradient-to-t from-black/60 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] transition-all ${touchUi ? 'duration-100' : 'duration-300'} ${
                 isLoading || !showControls ? 'opacity-0 pointer-events-none' : 'opacity-100'
               }`}
               style={videoBox ? { left: videoBox.left, width: videoBox.width } : { left: 0, right: 0 }}
@@ -1448,15 +1441,17 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               {/* Controls */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    onClick={togglePlay}
-                    aria-label={isPlaying ? 'Pausar' : 'Reproduzir'}
-                    className="text-white hover:bg-white/20 hover:text-white"
-                  >
-                    {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-                  </Button>
+                  {!touchUi && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={togglePlay}
+                      aria-label={isPlaying ? 'Pausar' : 'Reproduzir'}
+                      className="text-white hover:bg-white/20 hover:text-white"
+                    >
+                      {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                    </Button>
+                  )}
                   
                   <span className="text-white/90 text-xs font-medium sm:text-sm">
                     {formatTime(currentTime)} / {formatTime(duration)}
