@@ -94,7 +94,7 @@ describe('VideoPlayer: token expirado', () => {
     await waitFor(() => expect(screen.getByTestId('buffered')).toHaveStyle({ width: '90%' }))
   })
 
-  it('celular: toque mostra/esconde o botão grande; pausa só nele; toque duplo nas laterais pula 10 s', async () => {
+  it('celular: toque pausa como no computador; toque duplo nas laterais pula 10 s sem pausar', async () => {
     renderPlayer()
     const video = document.querySelector('video') as HTMLVideoElement
     await waitFor(() => expect(video.src).toContain('token='))
@@ -104,21 +104,18 @@ describe('VideoPlayer: token expirado', () => {
     fireEvent.playing(video)
     const tap = (x: number) => { fireEvent.touchStart(video); fireEvent.click(video, { clientX: x }) }
 
-    tap(150) // controles estavam visíveis: o toque esconde
-    await waitFor(() => expect(screen.queryByTestId('tap-overlay')).not.toBeInTheDocument())
-    tap(150)
-    expect(await screen.findByTestId('tap-overlay')).toBeInTheDocument()
-    expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('tap-play'))
-    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1)
-
     tap(280)
     tap(280)
     expect(await screen.findByTestId('seek-flash')).toHaveTextContent('+10 s')
     tap(20)
     tap(20)
     await waitFor(() => expect(screen.getByTestId('seek-flash')).toHaveTextContent('−10 s'))
+    await new Promise((r) => setTimeout(r, 400))
+    expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled()
+
+    tap(150) // meio: pausa na hora
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('tap-overlay')).not.toBeInTheDocument()
   })
 
   it('celular: arrastar para o lado não troca de episódio', async () => {

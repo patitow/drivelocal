@@ -308,7 +308,7 @@ function EntryEditor({ cat, entry, onDone }: { cat: EntryCat; entry: Entry | nul
         </p>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <section aria-label="Dados" className="space-y-4">
           <label className={field}>Título
             <Input value={f.title} onChange={(e) => set('title', e.target.value)} />
@@ -353,7 +353,7 @@ function EntryEditor({ cat, entry, onDone }: { cat: EntryCat; entry: Entry | nul
           </div>
           <label className={field}>Gêneros (separados por vírgula)<Input value={f.genres} onChange={(e) => set('genres', e.target.value)} /></label>
           <label className={field}>Link da ficha<Input value={f.url} onChange={(e) => set('url', e.target.value)} /></label>
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
             <ArtPicker label={cat === 'creators' ? 'Foto' : 'Capa'} round={cat === 'creators'} value={f.cover} onChange={(v) => set('cover', v)} items={artItems} />
             <ArtPicker label="Banner" wide value={f.banner} onChange={(v) => set('banner', v)} items={artItems} />
           </div>

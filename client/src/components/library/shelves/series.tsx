@@ -44,7 +44,7 @@ export function NextUp({ series, onOpen }: { series: SeriesGroup[]; onOpen: Open
   return (
     <section aria-label="Próximo episódio" className="space-y-3.5">
       <h3 className="font-display text-[22px] font-bold tracking-tight">Próximo episódio</h3>
-      <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-3">
         {list.map((s) => {
           const n = s.next!
           const idx = s.items.findIndex((it) => it.id === n.id)
@@ -191,7 +191,7 @@ export function SeriesDetail({ s, shelf, onOpen, onBack, backLabel }: { s: Serie
             {allSeen ? (scope === 'temporada' ? 'Desmarcar temporada' : 'Desmarcar todos') : (scope === 'temporada' ? 'Marcar temporada como vista' : 'Marcar todos como vistos')}
           </button>
         </div>
-        <ol className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+        <ol className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {shown.map((it) => {
             const i = s.items.indexOf(it)
             const current = it.id === target.id

@@ -95,7 +95,7 @@ export function ManageReview() {
               <Tile label="Última varredura" value={last?.finishedAt ? when(last.finishedAt) : '—'}
                 hint={last ? `${fmt(last.seen)} vistos · +${fmt(last.added)} novos · ${fmt(last.moved)} movidos${last.errors ? ` · ${last.errors} erros` : ''}` : undefined} />
             </div>
-            <div className="grid gap-2 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
               <Bars title="Por pasta" data={s.byRoot} />
               <Bars title="Por maturidade" data={s.byMaturity} label={(k) => MAT[k] ?? k} />
             </div>

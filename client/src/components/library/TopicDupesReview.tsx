@@ -110,7 +110,7 @@ export function TopicDupesReview() {
       </div>
       <Status loading={dupes.loading} error={dupes.error} />
       {dupes.data && groups.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma duplicata pendente.</p>}
-      <ul className="grid gap-2 lg:grid-cols-2">
+      <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
         {groups.map((g) => (
           <DupGroupCard key={`${g.canonical.id}-${g.members.map((m) => m.id).join('-')}`} g={g} busy={busy} onAccept={accept} onReject={reject} />
         ))}
@@ -118,7 +118,7 @@ export function TopicDupesReview() {
       {flagged.length > 0 && (
         <div className="space-y-2" data-testid="topic-flags">
           <h3 className="text-sm font-semibold">Marcados como inválidos ({flagged.length})</h3>
-          <ul className="grid gap-2 lg:grid-cols-2">
+          <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
             {flagged.map((f) => (
               <li key={f.topicId} className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-sm">
                 <Badge variant="outline">{KIND_LABEL[f.kind] ?? f.kind}</Badge>

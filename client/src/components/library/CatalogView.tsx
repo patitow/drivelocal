@@ -194,7 +194,7 @@ function TopicsTab({ onOpen }: { onOpen: OpenFn }) {
         </select>
       </div>
       <Status loading={list.loading} error={list.error} />
-      <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {list.data?.topics.map((t) => (
           <li key={t.id}>
             <button type="button" onClick={() => setSel(t)} className="flex w-full items-center gap-3 rounded-md border p-3 text-left hover:bg-accent">
@@ -274,7 +274,7 @@ function PlaylistsTab({ onOpen }: { onOpen: OpenFn }) {
         <Button type="submit" size="sm"><Plus className="mr-1 h-4 w-4" />Criar</Button>
       </form>
       <Status loading={list.loading} error={list.error} />
-      <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {list.data?.map((p) => (
           <li key={p.id} className="flex items-center gap-2 rounded-md border p-3">
             <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setSel(p)}>

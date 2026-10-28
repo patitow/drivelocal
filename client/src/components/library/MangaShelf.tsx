@@ -175,7 +175,7 @@ function WorkPage({ w, state, downloaded, onBack, onRead }: {
       </header>
       <section aria-label="Capítulos" className="space-y-3.5">
         <h3 className="font-display text-[22px] font-bold tracking-tight">{isVolumes(w) ? 'Volumes' : 'Capítulos'}</h3>
-        <ol className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {w.chapters.map((c, i) => {
             const current = state?.chapter === c.dir
             const read = done.has(c.dir)

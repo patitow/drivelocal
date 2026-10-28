@@ -23,7 +23,7 @@ function Spotlight({ s, shelf, onOpen, onDetail }: { s: SeriesGroup; shelf: Shel
         ? <WebImg src={art.banner} className="absolute inset-0 -z-10 h-full w-full object-cover opacity-60" />
         : <Still path={cover} className="absolute inset-0 -z-10 h-full w-full scale-110 object-cover opacity-50 blur-2xl" />}
       <div className="absolute inset-0 -z-10" style={{ background: `linear-gradient(100deg, ${shelf.ink} 18%, ${shelf.ink}cc 48%, ${shelf.ink}33 100%)` }} />
-      <div className="grid items-center gap-6 p-5 sm:p-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:gap-10 lg:p-10">
+      <div className="grid grid-cols-1 items-center gap-6 p-5 sm:p-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:gap-10 lg:p-10">
         <div className="order-2 min-w-0 space-y-4 lg:order-1">
           <p className="text-sm font-semibold" style={{ color: shelf.color }}>{going ? 'Você está assistindo' : 'Chegou agora'}</p>
           <h3 className="line-clamp-3 font-display text-4xl font-extrabold leading-[0.95] tracking-tighter text-white sm:text-5xl">{s.title}</h3>
