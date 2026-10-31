@@ -418,25 +418,15 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 	h.Set("X-Playback-Mode", mode)
 	h.Set("X-Stream-Lead", strconv.FormatFloat(streamLead, 'f', -1, 64))
 
-	end := int64(-1) // último byte a entregar (-1: até o ffmpeg terminar)
-	size, done, _ := j.state()
-	// ffmpeg morto no meio: o arquivo parcial não é o vídeo inteiro. Vai como resposta aberta
-	// (sem tamanho) e a conexão cai no fim, senão o navegador tomaria o corte pelo fim do vídeo.
-	if done && !j.isFailed() {
-		end = size - 1
-	}
+	// Resposta sempre aberta (sem tamanho total), mesmo com o ffmpeg já terminado. Com o tamanho
+	// o Chrome trata o MP4 fragmentado como arquivo navegável e lê o cabeçalho de cada fragmento
+	// antes de tocar: centenas de pedidos com Range de uma vez, travando a aba. Os saltos do
+	// player pedem stream novo (start=), então o navegador não precisa saber o tamanho.
+	// Também cobre o ffmpeg morto no meio: a conexão cai no fim do parcial.
 	if ranged {
-		if end >= 0 {
-			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, end, size))
-			h.Set("Content-Length", strconv.FormatInt(end-from+1, 10))
-		} else {
-			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", from, from+procOpenEnd-1))
-		}
+		h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", from, from+procOpenEnd-1))
 		w.WriteHeader(http.StatusPartialContent)
 	} else {
-		if end >= 0 {
-			h.Set("Content-Length", strconv.FormatInt(end+1, 10))
-		}
 		w.WriteHeader(http.StatusOK)
 	}
 	if r.Method == http.MethodHead {
@@ -449,7 +439,7 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 	if !ranged {
 		pos = 0
 	}
-	for end < 0 || pos <= end {
+	for {
 		size, done, ch := j.state()
 		if pos >= size {
 			if done {
@@ -466,9 +456,6 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 			}
 		}
 		want := size - pos
-		if end >= 0 {
-			want = min(want, end-pos+1)
-		}
 		n, rerr := f.ReadAt(buf[:min(int64(len(buf)), want)], pos)
 		if n > 0 {
 			if _, werr := out.Write(buf[:n]); werr != nil {

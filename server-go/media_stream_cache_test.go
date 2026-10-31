@@ -47,8 +47,12 @@ func TestProcessedStreamRanges(t *testing.T) {
 	if resp.StatusCode != http.StatusPartialContent {
 		t.Fatalf("range: got %d", resp.StatusCode)
 	}
-	if want := fmt.Sprintf("bytes %d-%d/%d", from, len(full)-1, len(full)); resp.Header.Get("Content-Range") != want {
+	// sem tamanho total mesmo com o ffmpeg terminado: com ele o Chrome varre os fragmentos do MP4
+	if want := fmt.Sprintf("bytes %d-%d/*", from, int64(from)+procOpenEnd-1); resp.Header.Get("Content-Range") != want {
 		t.Fatalf("Content-Range %q, want %q", resp.Header.Get("Content-Range"), want)
+	}
+	if resp.Header.Get("Content-Length") != "" {
+		t.Fatalf("Content-Length %q, want none", resp.Header.Get("Content-Length"))
 	}
 	if !bytes.Equal(part, full[from:]) {
 		t.Fatalf("range body differs from the full stream (%d vs %d bytes)", len(part), len(full)-from)
