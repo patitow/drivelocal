@@ -129,7 +129,7 @@ npm run dev                 # Vite em :3000, API em :5000
 ```bash
 cd server-go && go test ./...
 cd client && npx vitest run
-npm run test:playwright     # ponta a ponta
+npm run test:media          # ponta a ponta (reprodução)
 ```
 
 ## Stack
