@@ -340,17 +340,20 @@ func authMiddleware(next http.Handler) http.Handler {
 		}
 
 		token := requestAuthToken(r)
-
-		if token == "" {
-			logDebug("No token found for %s - AuthHeader: %s", r.URL.Path, r.Header.Get("Authorization"))
+		var tokenData *TokenData
+		if token != "" {
+			tokenData = validateToken(token)
+			if tokenData == nil && strings.HasPrefix(token, apiTokenPrefix) {
+				tokenData = validateAPIToken(token) // tokens de API da biblioteca (library_tokens.go)
+			}
 		}
 
-		if token == "" {
-			refreshCookie, err := r.Cookie("refreshToken")
-			if err == nil && refreshCookie != nil {
-				newToken, _, ok := refreshAccessToken(refreshCookie.Value)
-				if ok {
-					token = newToken
+		// Sem token ou com token vencido (o navegador guarda o último e manda como Bearer):
+		// renova pelo refresh token, senão o "lembrar-me" cairia a cada 15 minutos.
+		if tokenData == nil {
+			if refreshCookie, err := r.Cookie("refreshToken"); err == nil && refreshCookie.Value != "" {
+				if newToken, _, ok := refreshAccessToken(refreshCookie.Value); ok {
+					tokenData = validateToken(newToken)
 					secure := cookieSecure(r)
 					http.SetCookie(w, &http.Cookie{
 						Name:     "accessToken",
@@ -374,21 +377,10 @@ func authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		if token == "" {
-			logDebug("No token found for %s - AuthHeader: %s", r.URL.Path, r.Header.Get("Authorization"))
+		if tokenData == nil {
+			logDebug("Missing or expired token for %s", r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")
 			http.Error(w, `{"error":"Authentication required"}`, http.StatusUnauthorized)
-			return
-		}
-
-		tokenData := validateToken(token)
-		if tokenData == nil && strings.HasPrefix(token, apiTokenPrefix) {
-			tokenData = validateAPIToken(token) // tokens de API da biblioteca (library_tokens.go)
-		}
-		if tokenData == nil {
-			logDebug("Invalid or expired token for %s", r.URL.Path)
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":"Invalid or expired token"}`, http.StatusUnauthorized)
 			return
 		}
 
