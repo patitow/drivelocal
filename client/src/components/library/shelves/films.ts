@@ -78,3 +78,15 @@ export function inFranchise(title: string, name: string): string {
   if (!title.toLowerCase().startsWith(name.toLowerCase())) return title
   return title.slice(name.length).replace(SEP, '').replace(/^\d{1,2}:\s*/, '') || title
 }
+
+// Filmes do destaque: sorteio a cada visita entre os não vistos (todos, se já viu tudo),
+// sem dar lugar fixo ao que está pela metade; esse já tem o "Continuar" do player e a barra no card.
+export function pickHeroes(items: LibraryItem[], n = 6, rnd = Math.random): LibraryItem[] {
+  const fresh = items.filter((it) => !it.progress?.completed)
+  const pool = [...(fresh.length ? fresh : items)]
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1))
+    ;[pool[i], pool[j]] = [pool[j], pool[i]]
+  }
+  return pool.slice(0, n)
+}

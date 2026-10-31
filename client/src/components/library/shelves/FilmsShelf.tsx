@@ -1,6 +1,6 @@
 // Estante Filmes e Séries: séries fora de Animes, destaque em formato cinema, franquias, filmes de anime
 // (os soltos e longos da estante Animes, que aparecem nas duas) e grade A–Z.
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavParam } from '@/lib/nav'
 import { Check, FileWarning, Play } from 'lucide-react'
 import { cn, formatFileSize } from '@/lib/utils'
@@ -15,7 +15,7 @@ import { ArtFrame, useArt, useExtMeta } from '../ExtMeta'
 import { EditEntryButton } from '../EditEntryButton'
 import { FilterChips, SORT_LABEL, ShelfHeader, initial, shelfById, type Shelf, type Sort, type View } from './shelfUi'
 import { SeriesDetail } from './series'
-import { animeFilms as loadAnimeFilms, filmInfo, franchises, inFranchise, type Franchise } from './films'
+import { animeFilms as loadAnimeFilms, filmInfo, franchises, inFranchise, pickHeroes, type Franchise } from './films'
 
 const filmTitle = (it: LibraryItem) => filmInfo(it).title
 const ANIME = shelfById('animes')
@@ -36,6 +36,37 @@ const hours = (s: number) => {
   return h ? `${h} h ${m} min` : `${m} min`
 }
 
+const HERO_MS = 9000
+const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+// Destaque girando entre os sorteados; para com o mouse em cima ou com movimento reduzido.
+function FilmHeroes({ items, shelf, onPlay }: { items: LibraryItem[]; shelf: Shelf; onPlay: (it: LibraryItem) => void }) {
+  const [idx, setIdx] = useState(0)
+  const [hold, setHold] = useState(false)
+  useEffect(() => {
+    if (hold || items.length < 2 || reducedMotion()) return
+    const t = window.setTimeout(() => setIdx((i) => (i + 1) % items.length), HERO_MS)
+    return () => window.clearTimeout(t)
+  }, [idx, hold, items.length])
+  const cur = Math.min(idx, items.length - 1)
+  const it = items[cur]
+  return (
+    <div className="relative" onMouseEnter={() => setHold(true)} onMouseLeave={() => setHold(false)}
+      onFocusCapture={() => setHold(true)} onBlurCapture={() => setHold(false)}>
+      <FilmHero key={it.id} it={it} shelf={shelf} onPlay={() => onPlay(it)} />
+      {items.length > 1 && (
+        <div className="absolute bottom-5 right-5 flex items-center gap-1.5 sm:bottom-9 sm:right-9" role="tablist" aria-label="Destaques">
+          {items.map((x, i) => (
+            <button key={x.id} type="button" role="tab" aria-selected={i === cur} aria-label={`Destaque ${i + 1}`}
+              onClick={() => setIdx(i)}
+              className={cn('h-1.5 rounded-full transition-all', i === cur ? 'w-6 bg-white' : 'w-1.5 bg-white/40 hover:bg-white/70')} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Destaque de Filmes: still em formato cinema, com tarjas pretas e acento dourado.
 function FilmHero({ it, shelf, onPlay }: { it: LibraryItem; shelf: Shelf; onPlay: () => void }) {
   const pct = progressPct(it)
@@ -45,7 +76,7 @@ function FilmHero({ it, shelf, onPlay }: { it: LibraryItem; shelf: Shelf; onPlay
   const art = useArt(`media:${it.id}`)
   const year = meta?.year ?? info.year
   return (
-    <section aria-label="Destaque" className="overflow-hidden rounded-[28px] bg-black">
+    <section aria-label="Destaque" className="overflow-hidden rounded-[28px] bg-black animate-in fade-in duration-700">
       <div className="h-3 bg-black sm:h-5" />
       <button type="button" onClick={onPlay} aria-label={`${going ? 'Continuar' : 'Assistir'} ${info.title}`}
         className="group relative block aspect-[16/9] w-full overflow-hidden text-left sm:aspect-[2.39/1]">
@@ -53,7 +84,7 @@ function FilmHero({ it, shelf, onPlay }: { it: LibraryItem; shelf: Shelf; onPlay
         <span className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
         <span className="absolute inset-x-0 bottom-0 flex flex-col gap-3 p-5 sm:p-9">
           <span className="text-sm font-semibold" style={{ color: isAnime(it) ? ANIME.color : shelf.color }}>
-            {going ? 'Continue de onde parou' : isAnime(it) ? 'Filme de anime' : 'Em cartaz hoje'}
+            {isAnime(it) ? 'Filme de anime' : 'Em cartaz hoje'}
           </span>
           <span className="line-clamp-2 max-w-3xl font-display text-3xl font-extrabold leading-[0.95] tracking-tighter text-white sm:text-6xl">{info.title}</span>
           {meta?.synopsis && <span className="hidden max-w-2xl text-[15px] leading-relaxed text-white/75 sm:line-clamp-2">{meta.synopsis}</span>}
@@ -227,8 +258,10 @@ function FilmsAndSeries({ shelf, onOpen, onSerie }: { shelf: Shelf; onOpen: Open
   const animeFilms = anime.data ?? []
   const items = sortFilms([...own, ...animeFilms], sort)
   const going = items.filter((it) => progressPct(it) > 0 && progressPct(it) < 95)
-  const hero = [...going].sort((a, b) => b.mtime - a.mtime)[0]
-    ?? items.reduce<LibraryItem | undefined>((best, it) => (!best || it.mtime > best.mtime ? it : best), undefined)
+  // sorteados uma vez por visita (a lista muda de ordem com o filtro, o sorteio não)
+  const ids = items.map((it) => it.id).sort((a, b) => a - b).join(',')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const heroes = useMemo(() => pickHeroes(items), [ids])
   const play = (it: LibraryItem) => onOpen(items, Math.max(0, items.indexOf(it)))
   // A–Z: franquias e filmes de anime em destaque; o resto em seções por letra.
   const byTitle = sort === 'title'
@@ -277,7 +310,7 @@ function FilmsAndSeries({ shelf, onOpen, onSerie }: { shelf: Shelf; onOpen: Open
         </label>
       </div>
       <Status loading={loading} error={res.error ?? anime.error} />
-      {view === 'all' && hero && <FilmHero it={hero} shelf={shelf} onPlay={() => play(hero)} />}
+      {view === 'all' && heroes.length > 0 && <FilmHeroes items={heroes} shelf={shelf} onPlay={play} />}
       {tvList.length > 0 && (
         <section aria-label="Séries" className="space-y-4">
           <h3 className="font-display text-[26px] font-bold tracking-tight">Séries</h3>

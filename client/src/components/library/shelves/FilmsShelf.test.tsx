@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render } from '@/__tests__/render'
 import { library, type LibraryItem } from '@/lib/library'
 import { FilmsShelf } from './FilmsShelf'
+import { pickHeroes } from './films'
 import { shelfById } from './shelfUi'
 
 vi.mock('@/components/Thumbnail', () => ({ Thumbnail: () => <div data-testid="thumb" /> }))
@@ -68,5 +69,27 @@ describe('FilmsShelf', () => {
     expect(order()).toEqual(['Espada Mágica O Filme', 'Filme Solto Qualquer', 'Carros Turbo Corrida 1: Primeira', 'Carros Turbo Corrida 2: Segunda'])
     await userEvent.selectOptions(screen.getByRole('combobox'), 'largest')
     expect(order()[1]).toBe('Carros Turbo Corrida 1: Primeira')
+  })
+})
+
+describe('pickHeroes', () => {
+  const going = film('Filmes', 'Pela Metade.mkv', 5000, 1, { progress: { positionS: 900, durationS: 5000, completed: false } } as never)
+  const seen = film('Filmes', 'Ja Visto.mkv', 5000, 1, { progress: { positionS: 5000, durationS: 5000, completed: true } } as never)
+  const others = Array.from({ length: 8 }, (_, i) => film('Filmes', `Outro ${i}.mkv`, 5000, 1))
+
+  it('sorteia até 6, sem fixar o que está pela metade e sem os já vistos', () => {
+    const all = [going, seen, ...others]
+    const firsts = new Set<number>()
+    for (let k = 0; k < 40; k++) {
+      const h = pickHeroes(all)
+      expect(h).toHaveLength(6)
+      expect(h).not.toContain(seen)
+      firsts.add(h[0].id)
+    }
+    expect(firsts.size).toBeGreaterThan(1)
+  })
+
+  it('com tudo visto, sorteia entre os vistos', () => {
+    expect(pickHeroes([seen])).toEqual([seen])
   })
 })
