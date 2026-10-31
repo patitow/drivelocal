@@ -25,6 +25,11 @@ export async function inSeries(list: LibraryItem[], index: number): Promise<{ li
   return { list, index }
 }
 
+// Botão "Pular 85 s" sem capítulo de abertura: só em episódio de anime (abertura de ~1:30
+// logo no começo). Filme, série ocidental, gravação e vídeo de criador não seguem esse padrão.
+export const introGuessable = (it: LibraryItem) =>
+  it.kind === 'video' && it.root === 'Animes' && it.episode != null && (it.durationS ?? 0) < 2400
+
 export const asFile = (it: LibraryItem) => ({
   name: it.name,
   path: it.path,
@@ -32,6 +37,7 @@ export const asFile = (it: LibraryItem) => ({
   isImage: it.kind === 'image',
   isDirectory: false,
   size: it.size,
+  introGuess: introGuessable(it),
 })
 
 export function errorMessage(e: unknown): string {

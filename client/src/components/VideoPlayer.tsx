@@ -68,6 +68,8 @@ interface VideoPlayerProps {
     path: string
     isImage?: boolean
     isVideo?: boolean
+    // episódio de anime: sem capítulo de abertura, oferece pular INTRO_GUESS_S
+    introGuess?: boolean
   }
   files: Array<{ name: string; path: string; isImage?: boolean; isVideo?: boolean }>
   currentIndex: number
@@ -79,7 +81,8 @@ interface VideoPlayerProps {
 let autoplayPendingPath: string | null = null
 const UP_NEXT_SECONDS = 8
 const LONG_PAUSE_MS = 3 * 60 * 1000 // pausado além disso, remux/transcode retomam com stream novo
-// Sem capítulo de abertura no arquivo: botão de pular este tanto (abertura típica de anime).
+// Sem capítulo de abertura no arquivo: botão de pular este tanto (abertura típica de anime),
+// só para episódios de anime (file.introGuess).
 const INTRO_GUESS_S = 85
 
 // janela do toque duplo nas laterais (pular 10 s)
@@ -1293,7 +1296,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               const t = currentTime
               const target = intro
                 ? (t >= intro.start && t < intro.end - 2 ? intro.end : null)
-                : !info?.chapters?.length && canGoNext && duration > 600 && t > 3 && t < 180 ? t + INTRO_GUESS_S : null
+                : file.introGuess && !info?.chapters?.length && duration > 600 && t > 3 && t < 180 ? t + INTRO_GUESS_S : null
               if (target === null || broken || upNext) return null
               return (
                 <button

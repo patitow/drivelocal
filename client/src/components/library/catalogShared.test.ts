@@ -7,7 +7,7 @@ vi.mock('@/lib/library', async (orig) => ({
 }))
 
 import { library } from '@/lib/library'
-import { inSeries } from './catalogShared'
+import { inSeries, introGuessable } from './catalogShared'
 
 const ep = (id: number, topic?: number) => ({
   id, path: `p/${id}.mkv`, name: `${id}.mkv`, title: String(id), kind: 'video', root: 'Series', size: 1, mtime: 1,
@@ -36,5 +36,21 @@ describe('inSeries', () => {
     vi.mocked(library.search).mockRejectedValue(new Error('x'))
     const r = await inSeries(loose, 1)
     expect(r).toEqual({ list: loose, index: 1 })
+  })
+})
+
+describe('introGuessable', () => {
+  const it_ = (extra: Partial<LibraryItem>) => ({ ...ep(1), root: 'Animes', episode: 3, durationS: 1420, ...extra }) as LibraryItem
+
+  it('episódio de anime oferece pular a abertura', () => {
+    expect(introGuessable(it_({}))).toBe(true)
+  })
+
+  it('filme, série, gravação e vídeo sem episódio não oferecem', () => {
+    expect(introGuessable(it_({ durationS: 6000 }))).toBe(false)
+    expect(introGuessable(it_({ root: 'Series' }))).toBe(false)
+    expect(introGuessable(it_({ root: 'Filmes' }))).toBe(false)
+    expect(introGuessable(it_({ episode: undefined }))).toBe(false)
+    expect(introGuessable(it_({ kind: 'image' }))).toBe(false)
   })
 })
