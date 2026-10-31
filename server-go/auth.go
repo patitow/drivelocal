@@ -246,6 +246,18 @@ func validateToken(token string) *TokenData {
 	return data
 }
 
+// recentAccess guarda, só em memória, o último access token emitido por refresh token.
+// Pedidos simultâneos que chegam com o token vencido reaproveitam o mesmo em vez de
+// criar um por pedido. Nunca vai para o arquivo de sessões.
+type recentToken struct {
+	raw     string
+	expires int64
+}
+
+var recentAccess = map[string]recentToken{}
+
+const refreshReuseWindow = 30 * 1000 // ms
+
 func refreshAccessToken(refreshToken string) (string, int64, bool) {
 	refreshKey := hashToken(refreshToken)
 
@@ -263,10 +275,22 @@ func refreshAccessToken(refreshToken string) (string, int64, bool) {
 		return "", 0, false
 	}
 
+	now := time.Now().UnixMilli()
+	if r, ok := recentAccess[refreshKey]; ok && r.expires-ACCESS_TOKEN_EXPIRY+refreshReuseWindow > now {
+		if _, alive := tokens[hashToken(r.raw)]; alive {
+			return r.raw, r.expires, true
+		}
+	}
+	for k, r := range recentAccess {
+		if r.expires-ACCESS_TOKEN_EXPIRY+refreshReuseWindow <= now {
+			delete(recentAccess, k)
+		}
+	}
+
 	// Create new access token
 	newAccessToken := generateToken(32)
-	now := time.Now().UnixMilli()
 	expires := now + ACCESS_TOKEN_EXPIRY
+	recentAccess[refreshKey] = recentToken{raw: newAccessToken, expires: expires}
 
 	tokens[hashToken(newAccessToken)] = &TokenData{
 		Username:     data.Username,
@@ -350,7 +374,8 @@ func authMiddleware(next http.Handler) http.Handler {
 
 		// Sem token ou com token vencido (o navegador guarda o último e manda como Bearer):
 		// renova pelo refresh token, senão o "lembrar-me" cairia a cada 15 minutos.
-		if tokenData == nil {
+		// Token de API inválido não cai para o cookie: quem manda um quer ser aquele token.
+		if tokenData == nil && !strings.HasPrefix(token, apiTokenPrefix) {
 			if refreshCookie, err := r.Cookie("refreshToken"); err == nil && refreshCookie.Value != "" {
 				if newToken, _, ok := refreshAccessToken(refreshCookie.Value); ok {
 					tokenData = validateToken(newToken)

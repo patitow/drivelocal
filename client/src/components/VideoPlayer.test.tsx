@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, fireEvent, waitFor, screen } from '@testing-library/react'
 import { VideoPlayer } from './VideoPlayer'
+import { SERVER_RESTORED_EVENT } from '@/lib/reconnect'
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -55,6 +56,26 @@ describe('VideoPlayer: token expirado', () => {
     await waitFor(() => expect(video.src).toContain('token=novo'))
     expect(video.src).not.toContain('mode=')
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  // Volta do /api/health depois de uma falha passageira não pode recarregar quem está tocando bem.
+  it('servidor voltou: só recarrega o vídeo que tinha falhado', async () => {
+    renderPlayer()
+    const video = document.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(video.src).toContain('token='))
+    const load = vi.mocked(window.HTMLMediaElement.prototype.load)
+    const before = load.mock.calls.length
+    window.dispatchEvent(new Event(SERVER_RESTORED_EVENT))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(load.mock.calls.length).toBe(before)
+
+    // agora com o vídeo caído junto com o servidor
+    vi.mocked(api.getHealth).mockRejectedValue(new Error('down'))
+    fireEvent.error(video)
+    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+    vi.mocked(api.getHealth).mockResolvedValue({} as never)
+    window.dispatchEvent(new Event(SERVER_RESTORED_EVENT))
+    await waitFor(() => expect(load.mock.calls.length).toBeGreaterThan(before))
   })
 
   it('sem renovação, segue para o próximo modo', async () => {

@@ -1,10 +1,11 @@
 // Títulos de filme a partir do nome do arquivo e agrupamento em franquias.
 import { library, type LibraryItem } from '@/lib/library'
+import { ANIME_FILM_MIN_S, ANIME_ROOT, isWatched } from '@/lib/mediaRules'
 
 // Filmes de anime: soltos e longos (40 min+) da pasta Animes; episódios de série ficam de fora.
 // Aparecem nas duas estantes.
 export const animeFilms = (flags: { unwatched?: boolean; favorites?: boolean } = {}) =>
-  library.items({ root: 'Animes', kind: 'video', minDurationS: 2400, ...flags, limit: 200, sort: 'title' })
+  library.items({ root: ANIME_ROOT, kind: 'video', minDurationS: ANIME_FILM_MIN_S, ...flags, limit: 200, sort: 'title' })
     .then((p) => p.items.filter((it) => !it.topics?.some((t) => t.kind === 'series')))
 
 // Marcas de release: daqui em diante o nome é só ficha técnica.
@@ -82,7 +83,7 @@ export function inFranchise(title: string, name: string): string {
 // Filmes do destaque: sorteio a cada visita entre os não vistos (todos, se já viu tudo),
 // sem dar lugar fixo ao que está pela metade; esse já tem o "Continuar" do player e a barra no card.
 export function pickHeroes(items: LibraryItem[], n = 6, rnd = Math.random): LibraryItem[] {
-  const fresh = items.filter((it) => !it.progress?.completed)
+  const fresh = items.filter((it) => !isWatched(it))
   const pool = [...(fresh.length ? fresh : items)]
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(rnd() * (i + 1))

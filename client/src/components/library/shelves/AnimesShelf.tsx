@@ -9,6 +9,7 @@ import { FilterChips, SORT_LABEL, Segmented, ShelfHeader, Still, type Shelf, typ
 import { NextUp, SeriesDetail, SeriesStackCard, epLabel } from './series'
 import { filmInfo } from './films'
 import { WebImg, useArt } from '../ExtMeta'
+import { ANIME_FILM_MIN_S } from '@/lib/mediaRules'
 
 // Destaque de Animes: a série em andamento (ou a mais nova) com régua de episódios.
 function Spotlight({ s, shelf, onOpen, onDetail }: { s: SeriesGroup; shelf: Shelf; onOpen: OpenFn; onDetail: () => void }) {
@@ -95,7 +96,7 @@ export function RootShelf({ shelf, onOpen, count }: { shelf: Shelf; onOpen: Open
   const singles = (res.data?.groups ?? []).flatMap((g) => (g.type === 'item' && g.item ? [g.item] : []))
   // Soltos com mais de 40 min são filmes: vêm antes das séries, não no fim.
   // filmes (também na estante Filmes), com o título limpo do nome do arquivo
-  const films = singles.filter((it) => it.kind === 'video' && (it.durationS ?? 0) >= 2400)
+  const films = singles.filter((it) => it.kind === 'video' && (it.durationS ?? 0) >= ANIME_FILM_MIN_S)
   const filmCards = films.map((it) => ({ ...it, title: filmInfo(it).title }))
   const loose = singles.filter((it) => !films.includes(it))
   // duração e tamanho da série: soma dos episódios

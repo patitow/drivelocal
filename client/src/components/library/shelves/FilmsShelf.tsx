@@ -1,6 +1,6 @@
 // Estante Filmes e Séries: séries fora de Animes, destaque em formato cinema, franquias, filmes de anime
 // (os soltos e longos da estante Animes, que aparecem nas duas) e grade A–Z.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavParam } from '@/lib/nav'
 import { Check, FileWarning, Play } from 'lucide-react'
 import { cn, formatFileSize } from '@/lib/utils'
@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { Pencil } from 'lucide-react'
 import { library, formatDuration, type LibraryItem, type TopicCard } from '@/lib/library'
 import { useAuthRole } from '@/contexts/AuthContext'
+import { isInProgress } from '@/lib/mediaRules'
 import { Thumbnail } from '@/components/Thumbnail'
 import { FavoriteButton, Status, asFile, errorMessage, progressPct, useLoad, type OpenFn } from '../catalogShared'
 import { ArtFrame, useArt, useExtMeta } from '../ExtMeta'
@@ -42,17 +43,17 @@ const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia
 // Destaque girando entre os sorteados; para com o mouse em cima ou com movimento reduzido.
 function FilmHeroes({ items, shelf, onPlay }: { items: LibraryItem[]; shelf: Shelf; onPlay: (it: LibraryItem) => void }) {
   const [idx, setIdx] = useState(0)
-  const [hold, setHold] = useState(false)
+  const [paused, setPaused] = useState(false)
   useEffect(() => {
-    if (hold || items.length < 2 || reducedMotion()) return
+    if (paused || items.length < 2 || reducedMotion()) return
     const t = window.setTimeout(() => setIdx((i) => (i + 1) % items.length), HERO_MS)
     return () => window.clearTimeout(t)
-  }, [idx, hold, items.length])
+  }, [idx, paused, items.length])
   const cur = Math.min(idx, items.length - 1)
   const it = items[cur]
   return (
-    <div className="relative" onMouseEnter={() => setHold(true)} onMouseLeave={() => setHold(false)}
-      onFocusCapture={() => setHold(true)} onBlurCapture={() => setHold(false)}>
+    <div className="relative" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}
+      onFocusCapture={() => setPaused(true)} onBlurCapture={() => setPaused(false)}>
       <FilmHero key={it.id} it={it} shelf={shelf} onPlay={() => onPlay(it)} />
       {items.length > 1 && (
         <div className="absolute bottom-5 right-5 flex items-center gap-1.5 sm:bottom-9 sm:right-9" role="tablist" aria-label="Destaques">
@@ -70,7 +71,7 @@ function FilmHeroes({ items, shelf, onPlay }: { items: LibraryItem[]; shelf: She
 // Destaque de Filmes: still em formato cinema, com tarjas pretas e acento dourado.
 function FilmHero({ it, shelf, onPlay }: { it: LibraryItem; shelf: Shelf; onPlay: () => void }) {
   const pct = progressPct(it)
-  const going = pct > 0 && pct < 95
+  const going = isInProgress(it)
   const info = filmInfo(it)
   const meta = useExtMeta('movie', info.title, `media:${it.id}`)
   const art = useArt(`media:${it.id}`)
@@ -257,11 +258,16 @@ function FilmsAndSeries({ shelf, onOpen, onSerie }: { shelf: Shelf; onOpen: Open
   const own = res.data?.items ?? []
   const animeFilms = anime.data ?? []
   const items = sortFilms([...own, ...animeFilms], sort)
-  const going = items.filter((it) => progressPct(it) > 0 && progressPct(it) < 95)
-  // sorteados uma vez por visita (a lista muda de ordem com o filtro, o sorteio não)
-  const ids = items.map((it) => it.id).sort((a, b) => a - b).join(',')
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const heroes = useMemo(() => pickHeroes(items), [ids])
+  const going = items.filter(isInProgress)
+  // Sorteio uma vez por visita, só depois de as duas listas (filmes e filmes de anime) chegarem;
+  // guarda os ids para o progresso atualizado aparecer sem sortear de novo.
+  const [heroIds, setHeroIds] = useState<number[] | null>(null)
+  const settled = view === 'all' && !!res.data && !res.loading && !anime.loading
+  useEffect(() => {
+    if (settled && heroIds === null && items.length > 0) setHeroIds(pickHeroes(items).map((it) => it.id))
+  }, [settled, heroIds, items])
+  const current = new Map(items.map((it) => [it.id, it]))
+  const heroes = (heroIds ?? []).map((id) => current.get(id)).filter((it): it is LibraryItem => !!it)
   const play = (it: LibraryItem) => onOpen(items, Math.max(0, items.indexOf(it)))
   // A–Z: franquias e filmes de anime em destaque; o resto em seções por letra.
   const byTitle = sort === 'title'

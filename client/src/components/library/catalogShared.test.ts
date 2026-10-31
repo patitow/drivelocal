@@ -40,17 +40,17 @@ describe('inSeries', () => {
 })
 
 describe('introGuessable', () => {
-  const it_ = (extra: Partial<LibraryItem>) => ({ ...ep(1), root: 'Animes', episode: 3, durationS: 1420, ...extra }) as LibraryItem
+  const animeEp = (extra: Partial<LibraryItem>) => ({ ...ep(1), root: 'Animes', episode: 3, durationS: 1420, ...extra }) as LibraryItem
 
   it('episódio de anime oferece pular a abertura', () => {
-    expect(introGuessable(it_({}))).toBe(true)
+    expect(introGuessable(animeEp({}))).toBe(true)
   })
 
   it('filme, série, gravação e vídeo sem episódio não oferecem', () => {
-    expect(introGuessable(it_({ durationS: 6000 }))).toBe(false)
-    expect(introGuessable(it_({ root: 'Series' }))).toBe(false)
-    expect(introGuessable(it_({ root: 'Filmes' }))).toBe(false)
-    expect(introGuessable(it_({ episode: undefined }))).toBe(false)
-    expect(introGuessable(it_({ kind: 'image' }))).toBe(false)
+    expect(introGuessable(animeEp({ durationS: 6000 }))).toBe(false)
+    expect(introGuessable(animeEp({ root: 'Series' }))).toBe(false)
+    expect(introGuessable(animeEp({ root: 'Filmes' }))).toBe(false)
+    expect(introGuessable(animeEp({ episode: undefined }))).toBe(false)
+    expect(introGuessable(animeEp({ kind: 'image' }))).toBe(false)
   })
 })

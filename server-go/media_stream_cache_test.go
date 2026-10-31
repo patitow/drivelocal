@@ -224,3 +224,46 @@ func TestProcPartialStreamAbortsConnection(t *testing.T) {
 	}
 }
 
+// Safari sonda com "bytes=0-1" e depois pede pedaços fechados; sem um 206 exato o vídeo nem toca.
+// Com o ffmpeg terminado o tamanho total vai junto; o Chrome (Range aberto) segue sem ele.
+func TestProcClosedRangeServesExactSlice(t *testing.T) {
+	data := bytes.Repeat([]byte("0123456789abcdef"), 1<<12) // 64 KB
+	_, finish := fakeProcJob(t, "fake-closed", data)
+	finish(false)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serveProc(w, r, "fake-closed", "x.mkv", "remux", nil, nil)
+	}))
+	defer srv.Close()
+
+	for _, c := range []struct {
+		rng, cr string
+		body    []byte
+	}{
+		{"bytes=0-1", fmt.Sprintf("bytes 0-1/%d", len(data)), data[:2]},
+		{"bytes=100-199", fmt.Sprintf("bytes 100-199/%d", len(data)), data[100:200]},
+		{fmt.Sprintf("bytes=%d-%d", len(data)-10, len(data)+50), fmt.Sprintf("bytes %d-%d/%d", len(data)-10, len(data)-1, len(data)), data[len(data)-10:]},
+	} {
+		req, _ := http.NewRequest("GET", srv.URL, nil)
+		req.Header.Set("Range", c.rng)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusPartialContent || resp.Header.Get("Content-Range") != c.cr || !bytes.Equal(body, c.body) {
+			t.Fatalf("%s: status %d Content-Range %q, %d bytes", c.rng, resp.StatusCode, resp.Header.Get("Content-Range"), len(body))
+		}
+	}
+
+	req, _ := http.NewRequest("GET", srv.URL, nil)
+	req.Header.Set("Range", "bytes=100-")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !strings.HasSuffix(resp.Header.Get("Content-Range"), "/*") {
+		t.Fatalf("open range must stay without total, got %q", resp.Header.Get("Content-Range"))
+	}
+}

@@ -15,6 +15,7 @@ import type { AudioTrack, MediaInfo, PlaybackMode, SubtitleTrack } from '@/types
 import { usePlaybackProgress } from '@/hooks/usePlaybackProgress'
 import { useReleasingMediaRef } from '@/hooks/useReleasingMediaRef'
 import { formatDuration, nextPlayableIndex, type TrackChoice } from '@/lib/library'
+import { ANIME_FILM_MIN_S, isAnimePath } from '@/lib/mediaRules'
 
 // APIs de tela cheia com prefixo (Safari, Firefox antigo, IE/Edge)
 type VendorFullscreenElement = HTMLElement & {
@@ -82,7 +83,7 @@ let autoplayPendingPath: string | null = null
 const UP_NEXT_SECONDS = 8
 const LONG_PAUSE_MS = 3 * 60 * 1000 // pausado além disso, remux/transcode retomam com stream novo
 // Sem capítulo de abertura no arquivo: botão de pular este tanto (abertura típica de anime),
-// só para episódios de anime (file.introGuess).
+// só para episódios de anime (file.introGuess; sem a marcação, pela pasta e pela duração).
 const INTRO_GUESS_S = 85
 
 // janela do toque duplo nas laterais (pular 10 s)
@@ -1296,7 +1297,7 @@ export function VideoPlayer({ file, files, currentIndex, onClose, onNavigate }: 
               const t = currentTime
               const target = intro
                 ? (t >= intro.start && t < intro.end - 2 ? intro.end : null)
-                : file.introGuess && !info?.chapters?.length && duration > 600 && t > 3 && t < 180 ? t + INTRO_GUESS_S : null
+                : (file.introGuess ?? isAnimePath(file.path)) && !info?.chapters?.length && duration > 600 && duration < ANIME_FILM_MIN_S && t > 3 && t < 180 ? t + INTRO_GUESS_S : null
               if (target === null || broken || upNext) return null
               return (
                 <button

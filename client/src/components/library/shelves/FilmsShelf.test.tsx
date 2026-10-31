@@ -61,6 +61,23 @@ describe('FilmsShelf', () => {
     expect(router.state.location.search).toMatchObject({ serie: 't42' })
   })
 
+  // O destaque só sorteia quando os filmes de anime também chegaram, para não trocar na cara.
+  it('destaque espera as duas listas e não sorteia de novo', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const base = items.getMockImplementation()!
+    items.mockImplementation((args: { root: string }) => (args.root === 'Animes' ? gate.then(() => base(args)) : base(args)))
+    render(<FilmsShelf shelf={shelfById('filmes')} onOpen={vi.fn()} />)
+    await screen.findByRole('region', { name: 'Franquia Carros Turbo Corrida' })
+    expect(screen.queryByRole('region', { name: 'Destaque' })).not.toBeInTheDocument()
+    release()
+    const hero = await screen.findByRole('region', { name: 'Destaque' })
+    const first = hero.textContent
+    await screen.findByRole('region', { name: 'Filmes de anime' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.getByRole('region', { name: 'Destaque' }).textContent).toBe(first)
+  })
+
   it('ordena por duração e por tamanho', async () => {
     render(<FilmsShelf shelf={shelfById('filmes')} onOpen={vi.fn()} />)
     await screen.findByRole('region', { name: 'Filmes de anime' })

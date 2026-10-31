@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -286,13 +287,13 @@ func TestResetPasswordHandler(t *testing.T) {
 	usersMutex.Lock()
 	users = []User{
 		{
-			ID:              "1",
-			Username:        "testuser",
-			Password:        "oldhash",
-			Email:           "test@example.com",
-			Role:            "user",
-			Active:          true,
-			ResetToken:      &token,
+			ID:               "1",
+			Username:         "testuser",
+			Password:         "oldhash",
+			Email:            "test@example.com",
+			Role:             "user",
+			Active:           true,
+			ResetToken:       &token,
 			ResetTokenExpiry: &expiry,
 		},
 	}
@@ -376,7 +377,6 @@ func TestAuthMiddlewareMediaToken(t *testing.T) {
 	})
 }
 
-
 // Token de acesso vencido guardado no navegador (Bearer) não pode esconder o refresh token:
 // senão o "lembrar-me" de 30 dias vira um login de 15 minutos.
 func TestAuthMiddlewareRefreshesStaleBearer(t *testing.T) {
@@ -405,5 +405,84 @@ func TestAuthMiddlewareRefreshesStaleBearer(t *testing.T) {
 	}
 	if !got {
 		t.Fatal("expected a fresh accessToken cookie")
+	}
+}
+
+// Rajada de pedidos com o token vencido: um access token só, não um por pedido.
+func TestAuthMiddlewareConcurrentStaleBearerMintsOneToken(t *testing.T) {
+	_, refresh, _ := createTokens("testuser", "test-user-id", true)
+	h := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest("GET", "/api/auth/status", nil)
+			req.Header.Set("Authorization", "Bearer "+generateToken(32))
+			req.AddCookie(&http.Cookie{Name: "refreshToken", Value: refresh})
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Errorf("expected 200, got %d", w.Code)
+			}
+			for _, c := range w.Result().Cookies() {
+				if c.Name == "accessToken" {
+					mu.Lock()
+					seen[c.Value] = true
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if len(seen) != 1 {
+		t.Fatalf("expected 1 access token for the burst, got %d", len(seen))
+	}
+}
+
+// Lembrar-me depois de reiniciar: sessões vêm do disco e o Bearer velho não atrapalha.
+func TestAuthMiddlewareRefreshAfterRestart(t *testing.T) {
+	resetSessionState(t)
+	setTestUsers(User{ID: "u-rm", Username: "rm", Role: "user", Active: true})
+	stale, refresh, _ := createTokens("rm", "u-rm", true)
+	if err := flushSessions(); err != nil {
+		t.Fatalf("flushSessions: %v", err)
+	}
+	clearInMemorySessions()
+	loadSessions()
+	tokensMutex.Lock()
+	delete(tokens, hashToken(stale)) // access token venceu durante a parada
+	tokensMutex.Unlock()
+
+	h := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-User-ID") != "u-rm" {
+			t.Errorf("X-User-ID %q", r.Header.Get("X-User-ID"))
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	req.Header.Set("Authorization", "Bearer "+stale)
+	req.AddCookie(&http.Cookie{Name: "refreshToken", Value: refresh})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// Token de API inválido responde 401 mesmo com cookie de sessão no navegador.
+func TestAuthMiddlewareInvalidAPITokenDoesNotFallBack(t *testing.T) {
+	_, refresh, _ := createTokens("testuser", "test-user-id", true)
+	h := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	req.Header.Set("Authorization", "Bearer "+apiTokenPrefix+"invalido")
+	req.AddCookie(&http.Cookie{Name: "refreshToken", Value: refresh})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
 	}
 }

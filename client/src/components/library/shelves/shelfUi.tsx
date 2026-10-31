@@ -5,6 +5,7 @@ import { buildThumbnailUrlSync, cn } from '@/lib/utils'
 import { library, type LibraryItem } from '@/lib/library'
 import { useLoad } from '../catalogShared'
 import { animeFilms } from './films'
+import { ANIME_ROOT } from '@/lib/mediaRules'
 
 export type ShelfId = 'animes' | 'mangas' | 'filmes' | 'criadores'
 
@@ -18,7 +19,7 @@ export interface Shelf {
 }
 
 export const SHELVES: Shelf[] = [
-  { id: 'animes', label: 'Animes', unit: 'títulos', color: '#7B8BFF', ink: '#12143A', root: 'Animes' },
+  { id: 'animes', label: 'Animes', unit: 'títulos', color: '#7B8BFF', ink: '#12143A', root: ANIME_ROOT },
   { id: 'mangas', label: 'Mangás', unit: 'obras', color: '#F4F0E6', ink: '#181715' },
   { id: 'filmes', label: 'Filmes e Séries', unit: 'títulos', color: '#E8B93C', ink: '#2A1F00', root: 'Filmes' },
   { id: 'criadores', label: 'Criadores', unit: 'criadores', color: '#FF6B9A', ink: '#3A0A1D' },
@@ -34,7 +35,7 @@ export function useShelfCounts(): Partial<Record<ShelfId, number>> {
     const out: Partial<Record<ShelfId, number>> = {}
     await Promise.all([
       library.mangas().then((w) => { out.mangas = w.length }).catch(() => {}),
-      library.items({ root: 'Animes', limit: 1 }).then((p) => { out.animes = p.total }).catch(() => {}),
+      library.items({ root: ANIME_ROOT, limit: 1 }).then((p) => { out.animes = p.total }).catch(() => {}),
       Promise.all([library.items({ root: 'Filmes', limit: 1 }), animeFilms().catch(() => [])])
         .then(([p, a]) => { out.filmes = p.total + a.length }).catch(() => {}),
       library.topics({ kind: 'creator', limit: 1 }).then((p) => { out.criadores = p.total }).catch(() => {}),

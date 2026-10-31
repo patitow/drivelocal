@@ -348,6 +348,25 @@ func parseRangeStart(h string) (int64, bool) {
 	return n, true
 }
 
+// parseRangeEnd devolve o fim de um Range fechado ("bytes=0-1"). O Safari só pede assim e
+// recusa o vídeo se a resposta não for um 206 com exatamente esses bytes; o Chrome pede aberto.
+func parseRangeEnd(h string) (int64, bool) {
+	h = strings.TrimSpace(h)
+	if !strings.HasPrefix(h, "bytes=") || strings.Contains(h, ",") {
+		return 0, false
+	}
+	from, end, found := strings.Cut(strings.TrimPrefix(h, "bytes="), "-")
+	if !found || strings.TrimSpace(end) == "" {
+		return 0, false
+	}
+	a, err1 := strconv.ParseInt(strings.TrimSpace(from), 10, 64)
+	b, err2 := strconv.ParseInt(strings.TrimSpace(end), 10, 64)
+	if err1 != nil || err2 != nil || a < 0 || b < a {
+		return 0, false
+	}
+	return b, true
+}
+
 // serveProc entrega o stream a partir do Range pedido. Sem Range (ou bytes=0-): 200 com tudo,
 // acompanhando o ffmpeg. Com Range: 206 até o fim; enquanto o ffmpeg não termina, o tamanho total
 // vai como "*" e a resposta segue aberta acompanhando o ffmpeg. Não dá para entregar só um pedaço:
@@ -355,7 +374,8 @@ func parseRangeStart(h string) (int64, bool) {
 // Pelo mesmo motivo, stream parcial (ffmpeg morto) derruba a conexão em vez de terminar limpo.
 func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, slots chan struct{}, args []string) {
 	from, ranged := parseRangeStart(r.Header.Get("Range"))
-	if from == 0 {
+	end, closed := parseRangeEnd(r.Header.Get("Range"))
+	if from == 0 && !closed {
 		ranged = false
 	}
 	var j *procJob
@@ -417,6 +437,26 @@ func serveProc(w http.ResponseWriter, r *http.Request, key, full, mode string, s
 	h.Set("Accept-Ranges", "bytes")
 	h.Set("X-Playback-Mode", mode)
 	h.Set("X-Stream-Lead", strconv.FormatFloat(streamLead, 'f', -1, 64))
+
+	// Range fechado (Safari): só o pedaço pedido, com o tamanho total quando o ffmpeg já terminou.
+	if closed {
+		size, done, werr := j.waitFor(r.Context(), end)
+		if werr != nil {
+			return
+		}
+		last := min(end, size-1)
+		total := "*"
+		if done {
+			total = strconv.FormatInt(size, 10)
+		}
+		h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", from, last, total))
+		h.Set("Content-Length", strconv.FormatInt(last-from+1, 10))
+		w.WriteHeader(http.StatusPartialContent)
+		if r.Method != http.MethodHead {
+			io.Copy(w, io.NewSectionReader(f, from, last-from+1))
+		}
+		return
+	}
 
 	// Resposta sempre aberta (sem tamanho total), mesmo com o ffmpeg já terminado. Com o tamanho
 	// o Chrome trata o MP4 fragmentado como arquivo navegável e lê o cabeçalho de cada fragmento

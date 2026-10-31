@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Thumbnail } from '@/components/Thumbnail'
 import { cn } from '@/lib/utils'
 import { library, formatDuration, MATURITY_LABEL, type LibraryItem } from '@/lib/library'
+import { introGuessable, progressPct } from '@/lib/mediaRules'
 
 export type OpenFn = (list: LibraryItem[], index: number) => void
 
@@ -25,10 +26,7 @@ export async function inSeries(list: LibraryItem[], index: number): Promise<{ li
   return { list, index }
 }
 
-// Botão "Pular 85 s" sem capítulo de abertura: só em episódio de anime (abertura de ~1:30
-// logo no começo). Filme, série ocidental, gravação e vídeo de criador não seguem esse padrão.
-export const introGuessable = (it: LibraryItem) =>
-  it.kind === 'video' && it.root === 'Animes' && it.episode != null && (it.durationS ?? 0) < 2400
+export { introGuessable, progressPct }
 
 export const asFile = (it: LibraryItem) => ({
   name: it.name,
@@ -53,10 +51,6 @@ export function itemMeta(item: LibraryItem): string {
   ]
     .filter(Boolean)
     .join(' · ')
-}
-
-export function progressPct(item: LibraryItem): number {
-  return item.progress && item.progress.durationS > 0 ? Math.min(100, (item.progress.positionS / item.progress.durationS) * 100) : 0
 }
 
 export function FavoriteButton({ item, onChange, className }: { item: LibraryItem; onChange?: (on: boolean) => void; className?: string }) {

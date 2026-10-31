@@ -9,6 +9,7 @@ import { library, formatDuration, type FeedItem, type FeedScope, type TopicMini 
 import { errorMessage, progressPct, type OpenFn } from './catalogShared'
 import { defaultAspect, useHoverPreview } from './HomeTab'
 import { useReleasingMediaRef } from '@/hooks/useReleasingMediaRef'
+import { isAnimeRoot } from '@/lib/mediaRules'
 
 const SCOPES: Array<{ id: FeedScope; label: string }> = [
   { id: 'all', label: 'Tudo' }, { id: 'series', label: 'Animes' }, { id: 'creators', label: 'Criadores' }, { id: 'films', label: 'Filmes e Séries' },
@@ -41,7 +42,7 @@ function savedScope(): FeedScope {
 function accentOf(it: FeedItem): string {
   if (it.reasonTopic?.kind === 'creator') return '#FF6B9A'
   if (it.root === 'Filmes') return '#E8B93C'
-  if (it.root === 'Animes' || it.reasonTopic?.kind === 'series') return '#7B8BFF'
+  if (isAnimeRoot(it.root) || it.reasonTopic?.kind === 'series') return '#7B8BFF'
   return '#A8E3D0'
 }
 
