@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Outlet, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useAuth } from '@/contexts/AuthContext'
-import { api } from '@/lib/api'
 import { SERVER_RESTORED_EVENT, SERVER_UNAVAILABLE_EVENT, waitForServer } from '@/lib/reconnect'
 import { Login } from '@/components/Login'
 import { CatalogNav, type CatalogTab } from '@/components/library/CatalogNav'
@@ -81,17 +80,17 @@ export function AppShell() {
 
   const showLabels = isCompact || sidebarOpen
 
-  // Reconexão: detecta indisponibilidade do servidor e aguarda o retorno (novo boot ou health 200)
+  // Reconexão: detecta indisponibilidade do servidor e aguarda o /api/health voltar
   const [serverDown, setServerDown] = useState(false)
-  const bootIdRef = useRef<string | null>(null)
+  // faixa fechada pelo usuário; volta na próxima queda
+  const [bannerClosed, setBannerClosed] = useState(false)
   const reconnectingRef = useRef(false)
   const mountedRef = useRef(false)
 
   useEffect(() => {
     mountedRef.current = true
-    api.getBootId().then((id) => { bootIdRef.current = id }).catch(() => {})
     const handleDown = () => setServerDown(true)
-    const handleUp = () => setServerDown(false)
+    const handleUp = () => { setServerDown(false); setBannerClosed(false) }
     window.addEventListener(SERVER_UNAVAILABLE_EVENT, handleDown)
     window.addEventListener(SERVER_RESTORED_EVENT, handleUp)
     return () => {
@@ -106,13 +105,13 @@ export function AppShell() {
     reconnectingRef.current = true
     const run = async () => {
       while (mountedRef.current) {
-        const restored = await waitForServer({ prevBootId: bootIdRef.current })
+        // Qualquer resposta do /api/health basta: a queda costuma ser só da rede (celular trocando
+        // de rede, pedido que estourou o tempo). Esperar um bootId novo deixava a faixa presa
+        // para sempre quando o servidor nem tinha reiniciado.
+        const restored = await waitForServer()
         if (restored) break
       }
       reconnectingRef.current = false
-      if (mountedRef.current) {
-        api.getBootId().then((id) => { bootIdRef.current = id }).catch(() => {})
-      }
     }
     void run()
   }, [serverDown])
@@ -134,14 +133,22 @@ export function AppShell() {
 
   return (
     <div className="min-h-dvh bg-background">
-      {serverDown && (
+      {serverDown && !bannerClosed && (
         <div
           role="status"
           aria-live="polite"
-          className="fixed inset-x-0 top-0 z-[60] flex items-center justify-center gap-2 bg-amber-500 px-4 py-2 text-sm font-medium text-black"
+          className="fixed inset-x-0 top-0 z-[60] flex items-center justify-center gap-2 bg-amber-500 py-2 pl-4 pr-12 text-sm font-medium text-black"
         >
-          <Loader2 className="w-4 h-4 animate-spin" />
+          <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
           Conexão com o servidor perdida. Tentando reconectar...
+          <button
+            type="button"
+            onClick={() => setBannerClosed(true)}
+            aria-label="Fechar aviso"
+            className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md hover:bg-black/10"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
       <div className="flex h-dvh">
